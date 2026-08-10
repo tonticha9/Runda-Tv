@@ -18,6 +18,15 @@
   let searchDebounce = null;
 
   // ---------------- Player ----------------
+  let videoCheckTimer = null;
+
+  function clearVideoCheck() {
+    if (videoCheckTimer) {
+      clearTimeout(videoCheckTimer);
+      videoCheckTimer = null;
+    }
+  }
+
   function playChannel(channel, index) {
     if (!channel.url) return;
 
@@ -31,6 +40,7 @@
     playerStatic.hidden = true;
     onAirBadge.hidden = false;
 
+    clearVideoCheck();
     if (hls) {
       hls.destroy();
       hls = null;
@@ -41,25 +51,47 @@
       hls.loadSource(channel.url);
       hls.attachMedia(video);
       hls.on(window.Hls.Events.ERROR, (_evt, data) => {
-        if (data.fatal) {
-          console.warn("Stream haifanyi kazi:", channel.name, data);
-          showError();
+        if (!data.fatal) return;
+        console.warn("Stream error:", channel.name, data.type, data.details);
+        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+          showError("Imeshindikana kufikia stream (mtandao au chanzo kimefungwa) — jaribu chaneli nyingine");
+        } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+          showError("Video ya chaneli hii imeharibika au codec haiungwi mkono na kifaa chako — jaribu chaneli nyingine");
+        } else {
+          showError("Stream hii haipatikani kwa sasa — jaribu chaneli nyingine");
         }
       });
       video.play().catch(() => {});
+      scheduleVideoCheck();
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = channel.url;
       video.play().catch(() => {});
+      scheduleVideoCheck();
     } else {
-      showError();
+      showError("Browser yako haiwezi kucheza stream hii");
     }
   }
 
-  function showError() {
+  // Baada ya sekunde 6, angalia kama video ina picha kweli (videoWidth > 0).
+  // Baadhi ya streams zina audio pekee inayocheza wakati video codec (mara
+  // nyingi H.265/HEVC) haiwezi kudecode-wa na browser — hii inaonekana kama
+  // "screen nyeusi lakini sauti inasikika". Tunaigundua na kumwambia
+  // mtumiaji ukweli badala ya kumwacha na screen nyeusi tu.
+  function scheduleVideoCheck() {
+    videoCheckTimer = setTimeout(() => {
+      if (video.paused || video.ended) return;
+      if (video.videoWidth === 0) {
+        showError("Sauti inasikika lakini video haionekani — codec ya video hii haiungwi mkono na browser (kawaida H.265/HEVC). Jaribu chaneli nyingine.");
+      }
+    }, 6000);
+  }
+
+  function showError(message) {
+    clearVideoCheck();
     playerStatic.hidden = false;
     onAirBadge.hidden = true;
     playerStatic.querySelector(".static-msg").textContent =
-      "Stream hii haipatikani kwa sasa — jaribu chaneli nyingine";
+      message || "Stream hii haipatikani kwa sasa — jaribu chaneli nyingine";
   }
 
   // ---------------- Rendering ----------------
