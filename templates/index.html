@@ -43,12 +43,9 @@
 
 <nav class="tabs" id="tabs">
   <button class="tab active" data-tab="tanzania">🇹🇿 Tanzania</button>
-  <button class="tab" data-tab="news">📰 Habari</button>
-  <button class="tab" data-tab="music">🎵 Muziki</button>
-  <button class="tab" data-tab="entertainment">🎭 Burudani</button>
-  <button class="tab" data-tab="religious">🙏 Dini</button>
-  <button class="tab" data-tab="movies">🎬 Movies</button>
-  <button class="tab" data-tab="kids">🧸 Cartoon</button>
+  {% for slug, c in categories.items() %}
+  <button class="tab" data-tab="{{ slug }}">{{ c.emoji }} {{ c.label }}</button>
+  {% endfor %}
   <button class="tab" data-tab="world">🌍 Dunia Nzima</button>
 </nav>
 
