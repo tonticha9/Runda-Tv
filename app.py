@@ -33,24 +33,15 @@ IPTV_BASE = "https://iptv-org.github.io/iptv"
 REQUEST_TIMEOUT = 12
 CACHE_TTL = 60 * 60  # saa 1
 
-# Makundi (category) yanayooana na iptv-org/iptv categories/*.m3u
-# Movies, Entertainment, Music na Kids yameondolewa kabisa — hazina njia ya
-# kuaminika ya kuchuja "chache halali" kati ya channels za piracy.
 CATEGORIES = {
     "news":      {"label": "Habari", "slug": "news",      "emoji": "📰"},
     "religious": {"label": "Dini",   "slug": "religious", "emoji": "🙏"},
 }
 
-# Maneno/majina ya brand za kibiashara ambazo huwa hazina leseni kwenye
-# iptv-org (sports, movies, cartoon studios n.k). Yanatumika kuchuja hata
-# ndani ya Habari/Dini/Tanzania/nchi endapo channel imo kimakosa, na muhimu
-# zaidi kwenye tabs za nchi (world/tanzania) ambazo bado zina mchanganyiko.
 BLOCKLIST_KEYWORDS = [
-    # sports
     "sport", "espn", "bein", "supersport", "sky sport", "dazn", "eurosport",
     "willow", "star sports", "fox sports", "gol tv", "premier sports",
     "sportklub", "setanta", "match tv", "elevensports", "canal+ sport",
-    # movies / entertainment studios
     "hbo", "disney", "cartoon network", "nickelodeon", "nick jr", "cinemax",
     "showtime", "starz", "paramount", "universal", "warner", "sony movies",
     "fox movies", "amc", "cnbc movies", "zee cinema", "star movies",
@@ -63,7 +54,6 @@ def is_blocked(channel: dict) -> bool:
     haystack = f"{channel.get('name', '')} {channel.get('group', '')}".lower()
     return any(kw in haystack for kw in BLOCKLIST_KEYWORDS)
 
-# Nchi maarufu za kuonyesha kwenye tab ya "Dunia nzima" (msimbo wa ISO wa iptv-org)
 WORLD_COUNTRIES = [
     {"code": "tz", "label": "Tanzania", "flag": "🇹🇿"},
     {"code": "ke", "label": "Kenya", "flag": "🇰🇪"},
@@ -85,9 +75,6 @@ WORLD_COUNTRIES = [
     {"code": "es", "label": "Hispania", "flag": "🇪🇸"},
 ]
 
-# ---------------------------------------------------------------------------
-# Cache rahisi ya kumbukumbu (in-memory) yenye muda wa kuisha (TTL)
-# ---------------------------------------------------------------------------
 _cache: dict[str, tuple[float, list]] = {}
 
 
@@ -108,9 +95,6 @@ def cached(key_fn):
     return decorator
 
 
-# ---------------------------------------------------------------------------
-# M3U parsing
-# ---------------------------------------------------------------------------
 EXTINF_RE = re.compile(
     r'#EXTINF:-?\d+(?P<attrs>(?:\s+[\w-]+="[^"]*")*)\s*,\s*(?P<name>.+)'
 )
@@ -118,7 +102,6 @@ ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
 
 
 def parse_m3u(text: str) -> list[dict]:
-    """Geuza maudhui ya faili la .m3u kuwa list ya dict za channel."""
     channels = []
     lines = text.splitlines()
     pending = None
@@ -174,6 +157,56 @@ def get_country_channels(code: str) -> list[dict]:
     return fetch_playlist(f"{IPTV_BASE}/countries/{code}.m3u")
 
 
+RES_RE = re.compile(r"\((\d{3,4})p\)")
+
+
+def extract_resolution(name: str) -> int | None:
+    """Inatoa namba ya resolution (mfano 720) kutoka jina la channel
+    kama 'Ando TV (1080p)'. Inarudisha None kama hakuna resolution
+    iliyotajwa kwenye jina."""
+    m = RES_RE.search(name or "")
+    return int(m.group(1)) if m else None
+
+
+def base_name(name: str) -> str:
+    """Jina la channel bila sehemu ya '(720p)' n.k, kwa ajili ya
+    kulinganisha nakala za channel moja zenye resolution tofauti."""
+    return RES_RE.sub("", name or "").strip().lower()
+
+
+def prefer_medium_quality(channels: list[dict]) -> list[dict]:
+    """Endapo channel moja ina nakala kadhaa za resolution tofauti
+    (mfano '(1080p)' na '(480p)' za channel ile ile), tunabaki na
+    nakala yenye resolution ya kati (480-720p) pekee ili kupunguza
+    matumizi ya data ya simu. Channel zisizo na namba ya resolution
+    kwenye jina lake (haziwezi kulinganishwa) zinabaki jinsi zilivyo."""
+    groups: dict[str, list[dict]] = {}
+    no_res: list[dict] = []
+
+    for ch in channels:
+        res = extract_resolution(ch.get("name", ""))
+        if res is None:
+            no_res.append(ch)
+            continue
+        key = base_name(ch.get("name", ""))
+        groups.setdefault(key, []).append(ch)
+
+    out = list(no_res)
+    for variants in groups.values():
+        if len(variants) == 1:
+            out.append(variants[0])
+            continue
+
+        def score(ch):
+            res = extract_resolution(ch.get("name", "")) or 0
+            target = 600
+            return abs(res - target)
+
+        best = min(variants, key=score)
+        out.append(best)
+    return out
+
+
 def dedupe(channels: list[dict]) -> list[dict]:
     seen = set()
     out = []
@@ -185,12 +218,9 @@ def dedupe(channels: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         out.append(ch)
-    return out
+    return prefer_medium_quality(out)
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 @app.route("/")
 def index():
     return render_template(
