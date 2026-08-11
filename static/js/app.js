@@ -6,6 +6,7 @@
   const onAirBadge = document.getElementById("onAirBadge");
   const fixBtn = document.getElementById("fixBtn");
   const debugLog = document.getElementById("debugLog");
+  const copyLogBtn = document.getElementById("copyLogBtn");
   const npNumber = document.getElementById("npNumber");
   const npName = document.getElementById("npName");
   const npGroup = document.getElementById("npGroup");
@@ -22,8 +23,7 @@
   let searchDebounce = null;
   let currentChannel = null;
 
-  // ---------------- Debug log (inaonyesha moja kwa moja skrini-ni,
-  // kwa sababu simu haina urahisi wa kufungua browser console) ----------------
+  // ---------------- Debug log ----------------
   function dlog(msg) {
     const ts = new Date().toLocaleTimeString();
     debugLog.textContent += `[${ts}] ${msg}\n`;
@@ -32,6 +32,16 @@
   function clearLog() {
     debugLog.textContent = "";
   }
+  copyLogBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(debugLog.textContent || "(hakuna logs bado)");
+      copyLogBtn.textContent = "✅ Copied!";
+      setTimeout(() => { copyLogBtn.textContent = "📋 Copy Log"; }, 1500);
+    } catch (e) {
+      copyLogBtn.textContent = "❌ Imeshindwa";
+      setTimeout(() => { copyLogBtn.textContent = "📋 Copy Log"; }, 1500);
+    }
+  });
 
   // ---------------- Player ----------------
   let videoCheckTimer = null;
@@ -109,8 +119,6 @@
     }
   }
 
-  // Inapiga runda-transcoder (Fly.io) ili kubadilisha HEVC -> H.264 live,
-  // kisha inacheza playlist mpya inayotoka huko.
   async function playViaTranscoder(channel, index) {
     if (!TRANSCODER_URL) {
       showError("Transcoder haijasanidiwa bado (TRANSCODER_URL tupu kwenye app.js)", index);
@@ -144,7 +152,6 @@
     }
   }
 
-  // Baada ya sekunde 6, angalia kama video ina picha kweli (videoWidth > 0).
   function scheduleVideoCheck(index) {
     videoCheckTimer = setTimeout(() => {
       if (video.paused || video.ended) return;
