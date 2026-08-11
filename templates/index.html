@@ -46,16 +46,14 @@
 </section>
 
 <nav class="tabs" id="tabs">
-  <button class="tab active" data-tab="tanzania">🇹🇿 Tanzania</button>
   {% for slug, c in categories.items() %}
   <button class="tab" data-tab="{{ slug }}">{{ c.emoji }} {{ c.label }}</button>
   {% endfor %}
-  <button class="tab" data-tab="world">🌍 Dunia Nzima</button>
 </nav>
 
-<div class="world-picker" id="worldPicker" hidden>
+<div class="world-picker" id="worldPicker">
   {% for c in countries %}
-  <button class="chip" data-country="{{ c.code }}">{{ c.flag }} {{ c.label }}</button>
+  <button class="chip{{ ' active' if c.code == 'tz' else '' }}" data-country="{{ c.code }}">{{ c.flag }} {{ c.label }}</button>
   {% endfor %}
 </div>
 
