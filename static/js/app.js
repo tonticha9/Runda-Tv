@@ -188,7 +188,14 @@
         <span class="card-name">${escapeHtml(ch.name || "Bila jina")}</span>
         <span class="card-group">${escapeHtml(ch.group || ch.country || "")}</span>
       `;
-      card.addEventListener("click", () => playChannel(ch, i));
+      card.addEventListener("click", () => {
+  const scrollY = window.scrollY;
+  const restore = () => window.scrollTo(0, scrollY);
+  playChannel(ch, i);
+  requestAnimationFrame(restore);
+  setTimeout(restore, 60);
+  setTimeout(restore, 300);
+});
       frag.appendChild(card);
     });
     grid.appendChild(frag);
