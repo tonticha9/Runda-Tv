@@ -17,7 +17,6 @@
   const worldPicker = document.getElementById("worldPicker");
   const searchInput = document.getElementById("searchInput");
 
-  let currentTab = "tanzania";
   let currentCountry = "tz";
   let currentChannels = [];
   let hls = null;
@@ -88,7 +87,17 @@
 
     if (window.Hls && window.Hls.isSupported()) {
       dlog("HLS.js inatumika (MSE)");
-      hls = new window.Hls({ maxBufferLength: 30 });
+      hls = new window.Hls({
+        enableWorker: true,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 30,
+        backBufferLength: 10,
+        maxBufferHole: 0.5,
+        fragLoadingMaxRetry: 6,
+        fragLoadingRetryDelay: 500,
+        manifestLoadingMaxRetry: 4,
+        levelLoadingMaxRetry: 4,
+      });
       hls.loadSource(channel.url);
       hls.attachMedia(video);
       hls.on(window.Hls.Events.ERROR, (_evt, data) => {
@@ -139,7 +148,12 @@
           dlog(`Video (transcoded) inaonekana: ${video.videoWidth}x${video.videoHeight}`);
         }
       };
-      hls = new window.Hls({ maxBufferLength: 30 });
+      hls = new window.Hls({
+        enableWorker: true,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 30,
+        backBufferLength: 10,
+      });
       hls.loadSource(playlistUrl);
       hls.attachMedia(video);
       hls.on(window.Hls.Events.ERROR, (_evt, d) => {
@@ -189,13 +203,13 @@
         <span class="card-group">${escapeHtml(ch.group || ch.country || "")}</span>
       `;
       card.addEventListener("click", () => {
-  const scrollY = window.scrollY;
-  const restore = () => window.scrollTo(0, scrollY);
-  playChannel(ch, i);
-  requestAnimationFrame(restore);
-  setTimeout(restore, 60);
-  setTimeout(restore, 300);
-});
+        const scrollY = window.scrollY;
+        const restore = () => window.scrollTo(0, scrollY);
+        playChannel(ch, i);
+        requestAnimationFrame(restore);
+        setTimeout(restore, 60);
+        setTimeout(restore, 300);
+      });
       frag.appendChild(card);
     });
     grid.appendChild(frag);
@@ -207,21 +221,18 @@
     return div.innerHTML;
   }
 
-  async function loadTab(tab) {
-    currentTab = tab;
+  let mode = "country";
+  let activeCategory = null;
+
+  async function loadContent() {
     grid.innerHTML = "";
     guideStatus.hidden = false;
     guideStatus.textContent = "Inapakia chaneli…";
     searchInput.value = "";
 
-    let url;
-    if (tab === "tanzania") {
-      url = "/api/tanzania";
-    } else if (tab === "world") {
-      url = `/api/country/${currentCountry}`;
-    } else {
-      url = `/api/category/${tab}`;
-    }
+    const url = mode === "category"
+      ? `/api/category/${activeCategory}`
+      : `/api/country/${currentCountry}`;
 
     try {
       const res = await fetch(url);
@@ -239,10 +250,11 @@
     if (!btn) return;
     tabs.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     btn.classList.add("active");
+    worldPicker.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
 
-    const tab = btn.dataset.tab;
-    worldPicker.hidden = tab !== "world";
-    loadTab(tab);
+    mode = "category";
+    activeCategory = btn.dataset.tab;
+    loadContent();
   });
 
   worldPicker.addEventListener("click", (e) => {
@@ -250,8 +262,11 @@
     if (!chip) return;
     worldPicker.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
     chip.classList.add("active");
+    tabs.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+
+    mode = "country";
     currentCountry = chip.dataset.country;
-    loadTab("world");
+    loadContent();
   });
 
   searchInput.addEventListener("input", () => {
@@ -259,10 +274,10 @@
     const q = searchInput.value.trim();
     searchDebounce = setTimeout(async () => {
       if (!q) {
-        loadTab(currentTab);
+        loadContent();
         return;
       }
-      const scope = currentTab === "world" ? currentCountry : currentTab;
+      const scope = mode === "category" ? activeCategory : currentCountry;
       guideStatus.hidden = false;
       guideStatus.textContent = "Inatafuta…";
       try {
@@ -276,5 +291,14 @@
     }, 350);
   });
 
-  loadTab("tanzania");
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      video.pause();
+      dlog("App imekwenda background — video imesimamishwa kuokoa data");
+    } else if (currentChannel && video.paused && video.src) {
+      video.play().catch(() => {});
+    }
+  });
+
+  loadContent();
 })();
