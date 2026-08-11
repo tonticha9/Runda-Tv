@@ -7,6 +7,7 @@
   const fixBtn = document.getElementById("fixBtn");
   const debugLog = document.getElementById("debugLog");
   const copyLogBtn = document.getElementById("copyLogBtn");
+  const debugToggle = document.getElementById("debugToggle");
   const npNumber = document.getElementById("npNumber");
   const npName = document.getElementById("npName");
   const npGroup = document.getElementById("npGroup");
@@ -23,7 +24,6 @@
   let searchDebounce = null;
   let currentChannel = null;
 
-  // ---------------- Debug log ----------------
   function dlog(msg) {
     const ts = new Date().toLocaleTimeString();
     debugLog.textContent += `[${ts}] ${msg}\n`;
@@ -42,22 +42,17 @@
       setTimeout(() => { copyLogBtn.textContent = "📋 Copy Log"; }, 1500);
     }
   });
-
-  // ---------------- Player ----------------
-  let videoCheckTimer = null;
-
-  function clearVideoCheck() {
-    if (videoCheckTimer) {
-      clearTimeout(videoCheckTimer);
-      videoCheckTimer = null;
-    }
-  }
+  debugToggle.addEventListener("click", () => {
+    const showing = !debugLog.hidden;
+    debugLog.hidden = showing;
+    copyLogBtn.hidden = showing;
+  });
 
   function playChannel(channel, index, useTranscoder) {
     if (!channel.url) return;
     currentChannel = channel;
     clearLog();
-    dlog(`Kucheza: ${channel.name} | url=${channel.url}`);
+    dlog(`Kucheza: ${channel.name}`);
 
     document.querySelectorAll(".channel-card").forEach((el) => el.classList.remove("playing"));
     const card = grid.querySelector(`[data-index="${index}"]`);
@@ -66,54 +61,55 @@
     npNumber.textContent = String(index + 1).padStart(3, "0");
     npName.textContent = channel.name || "Bila jina";
     npGroup.textContent = channel.group || channel.country || "";
-    playerStatic.hidden = true;
     fixBtn.hidden = true;
-    onAirBadge.hidden = false;
+    onAirBadge.hidden = true;
+    playerStatic.hidden = false;
+    playerStatic.querySelector(".static-msg").textContent = "Inapakia…";
 
-    clearVideoCheck();
     if (hls) {
       hls.destroy();
       hls = null;
     }
+    video.oncanplay = null;
+    video.onplaying = null;
 
     if (useTranscoder) {
       playViaTranscoder(channel, index);
       return;
     }
 
+    video.onplaying = () => {
+      if (video.videoWidth > 0) {
+        playerStatic.hidden = true;
+        onAirBadge.hidden = false;
+        dlog(`Video inaonekana: ${video.videoWidth}x${video.videoHeight}`);
+      }
+    };
+
     if (window.Hls && window.Hls.isSupported()) {
       dlog("HLS.js inatumika (MSE)");
       hls = new window.Hls({ maxBufferLength: 30 });
       hls.loadSource(channel.url);
       hls.attachMedia(video);
-      hls.on(window.Hls.Events.MANIFEST_PARSED, (_e, data) => {
-        dlog(`MANIFEST_PARSED: levels=${data.levels.length}`);
-      });
-      hls.on(window.Hls.Events.LEVEL_LOADED, (_e, data) => {
-        dlog(`LEVEL_LOADED: ${JSON.stringify(data.details && data.details.live)}`);
-      });
-      hls.on(window.Hls.Events.FRAG_LOADED, () => {
-        dlog(`FRAG_LOADED videoWidth=${video.videoWidth} videoHeight=${video.videoHeight} readyState=${video.readyState}`);
-      });
       hls.on(window.Hls.Events.ERROR, (_evt, data) => {
-        dlog(`HLS ERROR type=${data.type} details=${data.details} fatal=${data.fatal}`);
+        dlog(`HLS ${data.fatal ? "FATAL" : "warn"}: ${data.type}/${data.details}`);
         if (!data.fatal) return;
-        console.warn("Stream error:", channel.name, data.type, data.details);
+        if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+          dlog("Inajaribu kupona (recoverMediaError)…");
+          hls.recoverMediaError();
+          return;
+        }
         if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
           showError("Imeshindikana kufikia stream (mtandao au chanzo kimefungwa) — jaribu chaneli nyingine", index);
-        } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
-          showError("Video ya chaneli hii imeharibika au codec haiungwi mkono — bonyeza 'Rekebisha video' hapo chini", index, true);
         } else {
           showError("Stream hii haipatikani kwa sasa — jaribu chaneli nyingine", index);
         }
       });
-      video.play().then(() => dlog("video.play() imefanikiwa")).catch((e) => dlog(`video.play() KATAA: ${e.message}`));
-      scheduleVideoCheck(index);
+      video.play().catch((e) => dlog(`video.play() KATAA: ${e.message}`));
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       dlog("Native HLS (Safari) inatumika");
       video.src = channel.url;
       video.play().catch(() => {});
-      scheduleVideoCheck(index);
     } else {
       showError("Browser yako haiwezi kucheza stream hii", index);
     }
@@ -124,7 +120,6 @@
       showError("Transcoder haijasanidiwa bado (TRANSCODER_URL tupu kwenye app.js)", index);
       return;
     }
-    guideStatus.hidden = false;
     playerStatic.hidden = false;
     playerStatic.querySelector(".static-msg").textContent = "Inarekebisha video (transcoding)… subiri sekunde chache";
     fixBtn.hidden = true;
@@ -136,13 +131,19 @@
         showError(data.error || "Transcoder imeshindwa kuanzisha stream hii", index);
         return;
       }
-      playerStatic.hidden = true;
-      onAirBadge.hidden = false;
       const playlistUrl = `${TRANSCODER_URL}${data.playlist}`;
+      video.onplaying = () => {
+        if (video.videoWidth > 0) {
+          playerStatic.hidden = true;
+          onAirBadge.hidden = false;
+          dlog(`Video (transcoded) inaonekana: ${video.videoWidth}x${video.videoHeight}`);
+        }
+      };
       hls = new window.Hls({ maxBufferLength: 30 });
       hls.loadSource(playlistUrl);
       hls.attachMedia(video);
       hls.on(window.Hls.Events.ERROR, (_evt, d) => {
+        dlog(`Transcoder HLS ${d.fatal ? "FATAL" : "warn"}: ${d.type}/${d.details}`);
         if (d.fatal) showError("Transcoded stream imesimama — jaribu tena", index);
       });
       video.play().catch(() => {});
@@ -152,17 +153,7 @@
     }
   }
 
-  function scheduleVideoCheck(index) {
-    videoCheckTimer = setTimeout(() => {
-      if (video.paused || video.ended) return;
-      if (video.videoWidth === 0) {
-        showError("Sauti inasikika lakini video haionekani (codec H.265/HEVC). Bonyeza 'Rekebisha video' kubadilisha kiotomatiki.", index, true);
-      }
-    }, 6000);
-  }
-
   function showError(message, index, offerFix) {
-    clearVideoCheck();
     playerStatic.hidden = false;
     onAirBadge.hidden = true;
     playerStatic.querySelector(".static-msg").textContent =
@@ -173,7 +164,6 @@
     }
   }
 
-  // ---------------- Rendering ----------------
   function renderChannels(channels) {
     currentChannels = channels;
     grid.innerHTML = "";
@@ -210,7 +200,6 @@
     return div.innerHTML;
   }
 
-  // ---------------- Fetching ----------------
   async function loadTab(tab) {
     currentTab = tab;
     grid.innerHTML = "";
@@ -238,7 +227,6 @@
     }
   }
 
-  // ---------------- Tabs ----------------
   tabs.addEventListener("click", (e) => {
     const btn = e.target.closest(".tab");
     if (!btn) return;
@@ -259,7 +247,6 @@
     loadTab("world");
   });
 
-  // ---------------- Search ----------------
   searchInput.addEventListener("input", () => {
     clearTimeout(searchDebounce);
     const q = searchInput.value.trim();
@@ -282,6 +269,5 @@
     }, 350);
   });
 
-  // ---------------- Init ----------------
   loadTab("tanzania");
 })();
