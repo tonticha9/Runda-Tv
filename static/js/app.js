@@ -5,6 +5,7 @@
   const playerStatic = document.getElementById("playerStatic");
   const onAirBadge = document.getElementById("onAirBadge");
   const fixBtn = document.getElementById("fixBtn");
+  const debugLog = document.getElementById("debugLog");
   const npNumber = document.getElementById("npNumber");
   const npName = document.getElementById("npName");
   const npGroup = document.getElementById("npGroup");
@@ -21,6 +22,17 @@
   let searchDebounce = null;
   let currentChannel = null;
 
+  // ---------------- Debug log (inaonyesha moja kwa moja skrini-ni,
+  // kwa sababu simu haina urahisi wa kufungua browser console) ----------------
+  function dlog(msg) {
+    const ts = new Date().toLocaleTimeString();
+    debugLog.textContent += `[${ts}] ${msg}\n`;
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
+  function clearLog() {
+    debugLog.textContent = "";
+  }
+
   // ---------------- Player ----------------
   let videoCheckTimer = null;
 
@@ -34,6 +46,8 @@
   function playChannel(channel, index, useTranscoder) {
     if (!channel.url) return;
     currentChannel = channel;
+    clearLog();
+    dlog(`Kucheza: ${channel.name} | url=${channel.url}`);
 
     document.querySelectorAll(".channel-card").forEach((el) => el.classList.remove("playing"));
     const card = grid.querySelector(`[data-index="${index}"]`);
@@ -58,10 +72,21 @@
     }
 
     if (window.Hls && window.Hls.isSupported()) {
+      dlog("HLS.js inatumika (MSE)");
       hls = new window.Hls({ maxBufferLength: 30 });
       hls.loadSource(channel.url);
       hls.attachMedia(video);
+      hls.on(window.Hls.Events.MANIFEST_PARSED, (_e, data) => {
+        dlog(`MANIFEST_PARSED: levels=${data.levels.length}`);
+      });
+      hls.on(window.Hls.Events.LEVEL_LOADED, (_e, data) => {
+        dlog(`LEVEL_LOADED: ${JSON.stringify(data.details && data.details.live)}`);
+      });
+      hls.on(window.Hls.Events.FRAG_LOADED, () => {
+        dlog(`FRAG_LOADED videoWidth=${video.videoWidth} videoHeight=${video.videoHeight} readyState=${video.readyState}`);
+      });
       hls.on(window.Hls.Events.ERROR, (_evt, data) => {
+        dlog(`HLS ERROR type=${data.type} details=${data.details} fatal=${data.fatal}`);
         if (!data.fatal) return;
         console.warn("Stream error:", channel.name, data.type, data.details);
         if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
@@ -72,9 +97,10 @@
           showError("Stream hii haipatikani kwa sasa — jaribu chaneli nyingine", index);
         }
       });
-      video.play().catch(() => {});
+      video.play().then(() => dlog("video.play() imefanikiwa")).catch((e) => dlog(`video.play() KATAA: ${e.message}`));
       scheduleVideoCheck(index);
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      dlog("Native HLS (Safari) inatumika");
       video.src = channel.url;
       video.play().catch(() => {});
       scheduleVideoCheck(index);
