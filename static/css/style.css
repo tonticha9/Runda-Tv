@@ -55,19 +55,25 @@ body {
 
 a { color: var(--num); }
 
-/* ---------- topbar ---------- */
-.topbar {
+/* ---------- sticky head (topbar + player + tabs) ---------- */
+/* Kila kitu ndani ya hii kinabaki juu daima, hata mtumiaji akiscroll
+   chini kutafuta channel — hii ndiyo maombi makuu: video isipotee. */
+.sticky-head {
   position: sticky;
   top: 0;
   z-index: 20;
+  background: rgb(13,17,23);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 6px 16px rgba(0,0,0,.35);
+}
+
+/* ---------- topbar ---------- */
+.topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: .75rem;
   padding: .85rem 1rem;
-  background: rgba(13,17,23,.92);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--border);
 }
 
 .brand { display: flex; align-items: center; gap: .5rem; }
