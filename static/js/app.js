@@ -22,6 +22,16 @@
   let hls = null;
   let searchDebounce = null;
   let currentChannel = null;
+  let currentIndex = null;
+
+  // Kila mara playChannel inaitwa, playToken inaongezeka. Retries za zamani
+  // zinaangalia token yao dhidi ya ya sasa kabla ya kujaribu tena — hii
+  // inazuia retry ya channel ya zamani "kuingilia" channel mpya aliyochagua
+  // mtumiaji.
+  let playToken = 0;
+  let retryTimer = null;
+  let retryCountdown = null;
+  let listRefreshTimer = null;
 
   function dlog(msg) {
     const ts = new Date().toLocaleTimeString();
@@ -47,9 +57,33 @@
     copyLogBtn.hidden = showing;
   });
 
+  // -------------------------------------------------------------------
+  // Scroll-lock: baadhi ya simu (hasa iOS/Chrome) hujisogeza kuelekea
+  // <video> pindi playback inapoanza. Badala ya kurudisha scroll mara
+  // chache tu (setTimeout), tunashikilia nafasi ya scroll kwa muda kwa
+  // kutumia requestAnimationFrame — ikiwa kitu kitajaribu kusogeza screen
+  // wakati huu, tunairudisha papo hapo.
+  // -------------------------------------------------------------------
+  function lockScroll(duration = 900) {
+    const y = window.scrollY;
+    const start = performance.now();
+    function tick(now) {
+      if (Math.abs(window.scrollY - y) > 2) {
+        window.scrollTo(0, y);
+      }
+      if (now - start < duration) {
+        requestAnimationFrame(tick);
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
   function playChannel(channel, index, useTranscoder) {
     if (!channel.url) return;
     currentChannel = channel;
+    currentIndex = index;
+    const myToken = ++playToken;
+    clearTimeout(retryTimer);
     clearLog();
     dlog(`Kucheza: ${channel.name}`);
 
@@ -73,7 +107,7 @@
     video.onplaying = null;
 
     if (useTranscoder) {
-      playViaTranscoder(channel, index);
+      playViaTranscoder(channel, index, myToken);
       return;
     }
 
@@ -81,6 +115,8 @@
       if (video.videoWidth > 0) {
         playerStatic.hidden = true;
         onAirBadge.hidden = false;
+        clearTimeout(retryTimer);
+        lockScroll(600);
         dlog(`Video inaonekana: ${video.videoWidth}x${video.videoHeight}`);
       }
     };
@@ -109,9 +145,9 @@
           return;
         }
         if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
-          showError("Imeshindikana kufikia stream (mtandao au chanzo kimefungwa) — jaribu chaneli nyingine", index);
+          showError("Chaneli haipatikani kwa sasa", index, false, true, myToken);
         } else {
-          showError("Stream hii haipatikani kwa sasa — jaribu chaneli nyingine", index);
+          showError("Stream hii haipatikani kwa sasa", index, false, true, myToken);
         }
       });
       video.play().catch((e) => dlog(`video.play() KATAA: ${e.message}`));
@@ -120,13 +156,13 @@
       video.src = channel.url;
       video.play().catch(() => {});
     } else {
-      showError("Browser yako haiwezi kucheza stream hii", index);
+      showError("Browser yako haiwezi kucheza stream hii", index, false, false, myToken);
     }
   }
 
-  async function playViaTranscoder(channel, index) {
+  async function playViaTranscoder(channel, index, myToken) {
     if (!TRANSCODER_URL) {
-      showError("Transcoder haijasanidiwa bado (TRANSCODER_URL tupu kwenye app.js)", index);
+      showError("Transcoder haijasanidiwa bado (TRANSCODER_URL tupu kwenye app.js)", index, false, false, myToken);
       return;
     }
     playerStatic.hidden = false;
@@ -136,8 +172,9 @@
     try {
       const res = await fetch(`${TRANSCODER_URL}/start?url=${encodeURIComponent(channel.url)}`);
       const data = await res.json();
+      if (playToken !== myToken) return; // mtumiaji ameshabadili channel
       if (!res.ok) {
-        showError(data.error || "Transcoder imeshindwa kuanzisha stream hii", index);
+        showError(data.error || "Transcoder imeshindwa kuanzisha stream hii", index, false, true, myToken);
         return;
       }
       const playlistUrl = `${TRANSCODER_URL}${data.playlist}`;
@@ -145,6 +182,8 @@
         if (video.videoWidth > 0) {
           playerStatic.hidden = true;
           onAirBadge.hidden = false;
+          clearTimeout(retryTimer);
+          lockScroll(600);
           dlog(`Video (transcoded) inaonekana: ${video.videoWidth}x${video.videoHeight}`);
         }
       };
@@ -158,23 +197,43 @@
       hls.attachMedia(video);
       hls.on(window.Hls.Events.ERROR, (_evt, d) => {
         dlog(`Transcoder HLS ${d.fatal ? "FATAL" : "warn"}: ${d.type}/${d.details}`);
-        if (d.fatal) showError("Transcoded stream imesimama — jaribu tena", index);
+        if (d.fatal) showError("Transcoded stream imesimama", index, false, true, myToken);
       });
       video.play().catch(() => {});
     } catch (err) {
       console.error(err);
-      showError("Imeshindikana kufikia transcoder — angalia kama Fly.io service inaendesha", index);
+      showError("Imeshindikana kufikia transcoder — angalia kama Fly.io service inaendesha", index, false, true, myToken);
     }
   }
 
-  function showError(message, index, offerFix) {
+  // -------------------------------------------------------------------
+  // showError: ikiwa retryable=true, tunajaribu tena channel hiyohiyo
+  // baada ya sekunde 20 — mpaka itakapokuwa live tena au mtumiaji
+  // achague channel nyingine (playToken inabadilika hivyo retry ya zamani
+  // inajizuia yenyewe).
+  // -------------------------------------------------------------------
+  function showError(message, index, offerFix, retryable, token) {
+    if (token !== undefined && token !== playToken) return; // si channel ya sasa
     playerStatic.hidden = false;
     onAirBadge.hidden = true;
-    playerStatic.querySelector(".static-msg").textContent =
-      message || "Stream hii haipatikani kwa sasa — jaribu chaneli nyingine";
+
+    let text = message || "Stream hii haipatikani kwa sasa";
+    if (retryable) text += " — tunajaribu tena kila baada ya sekunde 20…";
+    playerStatic.querySelector(".static-msg").textContent = text;
+
     fixBtn.hidden = !offerFix;
     if (offerFix && currentChannel) {
       fixBtn.onclick = () => playChannel(currentChannel, index, true);
+    }
+
+    clearTimeout(retryTimer);
+    if (retryable && currentChannel) {
+      retryTimer = setTimeout(() => {
+        if (token !== playToken) return;
+        if (document.hidden) return; // usijaribu app ikiwa background
+        dlog("Retry otomatiki: inajaribu channel hii tena…");
+        playChannel(currentChannel, index);
+      }, 20000);
     }
   }
 
@@ -197,22 +256,28 @@
       card.innerHTML = `
         <div class="card-top">
           <span class="card-number">${String(i + 1).padStart(3, "0")}</span>
-          ${ch.logo ? `<img class="card-logo" src="${ch.logo}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ""}
+          ${ch.logo ? `<img class="card-logo" src="${ch.logo}" alt="" loading="lazy" width="28" height="28" onerror="this.style.visibility='hidden'">` : ""}
         </div>
         <span class="card-name">${escapeHtml(ch.name || "Bila jina")}</span>
         <span class="card-group">${escapeHtml(ch.group || ch.country || "")}</span>
       `;
       card.addEventListener("click", () => {
-        const scrollY = window.scrollY;
-        const restore = () => window.scrollTo(0, scrollY);
+        lockScroll(1000);
         playChannel(ch, i);
-        requestAnimationFrame(restore);
-        setTimeout(restore, 60);
-        setTimeout(restore, 300);
       });
       frag.appendChild(card);
     });
     grid.appendChild(frag);
+
+    // kama channel iliyokuwa ikichezwa bado ipo kwenye orodha mpya, ionyeshe
+    // tena kama "playing" (inatumika na silent refresh)
+    if (currentChannel) {
+      const idx = channels.findIndex((c) => c.url === currentChannel.url);
+      if (idx >= 0) {
+        const card = grid.querySelector(`[data-index="${idx}"]`);
+        if (card) card.classList.add("playing");
+      }
+    }
   }
 
   function escapeHtml(str) {
@@ -224,24 +289,60 @@
   let mode = "country";
   let activeCategory = null;
 
+  function currentListUrl() {
+    return mode === "category"
+      ? `/api/category/${activeCategory}`
+      : `/api/country/${currentCountry}`;
+  }
+
   async function loadContent() {
     grid.innerHTML = "";
     guideStatus.hidden = false;
     guideStatus.textContent = "Inapakia chaneli…";
     searchInput.value = "";
 
-    const url = mode === "category"
-      ? `/api/category/${activeCategory}`
-      : `/api/country/${currentCountry}`;
-
     try {
-      const res = await fetch(url);
+      const res = await fetch(currentListUrl());
       const data = await res.json();
       guideStatus.textContent = `${data.count} chaneli zimepatikana`;
       renderChannels(data.channels || []);
+      scheduleListRefresh();
     } catch (err) {
       guideStatus.textContent = "Imeshindikana kupakia chaneli. Angalia mtandao wako.";
       console.error(err);
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Silent refresh: kila dakika 3 tunaangalia kama orodha imebadilika
+  // (channel zilizokuwa haziko live sasa zime-disappear, na zile
+  // zilizorudi live zimeongezwa). Haivunji video inayochezwa wala
+  // haisogeza screen.
+  // -------------------------------------------------------------------
+  function scheduleListRefresh() {
+    clearInterval(listRefreshTimer);
+    listRefreshTimer = setInterval(silentRefresh, 3 * 60 * 1000);
+  }
+
+  async function silentRefresh() {
+    if (document.hidden) return;
+    if (searchInput.value.trim()) return; // usiingiliane na search inayoendelea
+
+    try {
+      const res = await fetch(currentListUrl());
+      const data = await res.json();
+      const newChannels = data.channels || [];
+
+      const sameLength = newChannels.length === currentChannels.length;
+      const unchanged = sameLength && newChannels.every((c, i) => c.url === currentChannels[i]?.url);
+      if (unchanged) return;
+
+      lockScroll(500);
+      guideStatus.hidden = true;
+      renderChannels(newChannels);
+      dlog(`Orodha ya chaneli imesasishwa kimya kimya (${newChannels.length} sasa)`);
+    } catch (err) {
+      console.error("Silent refresh imeshindwa:", err);
     }
   }
 
@@ -294,9 +395,14 @@
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       video.pause();
+      clearInterval(listRefreshTimer);
+      clearTimeout(retryTimer);
       dlog("App imekwenda background — video imesimamishwa kuokoa data");
-    } else if (currentChannel && video.paused && video.src) {
-      video.play().catch(() => {});
+    } else {
+      if (currentChannel && video.paused && video.src) {
+        video.play().catch(() => {});
+      }
+      scheduleListRefresh();
     }
   });
 
