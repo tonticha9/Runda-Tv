@@ -58,24 +58,33 @@
   });
 
   // -------------------------------------------------------------------
-  // Scroll-lock: baadhi ya simu (hasa iOS/Chrome) hujisogeza kuelekea
-  // <video> pindi playback inapoanza. Badala ya kurudisha scroll mara
-  // chache tu (setTimeout), tunashikilia nafasi ya scroll kwa muda kwa
-  // kutumia requestAnimationFrame — ikiwa kitu kitajaribu kusogeza screen
-  // wakati huu, tunairudisha papo hapo.
+  // Scroll-guard: baadhi ya simu (hasa iOS/Chrome) hujisogeza kuelekea
+  // <video> pindi playback inapoanza — hii ndiyo tunayotaka kuizuia.
+  // LAKINI: kama MTUMIAJI mwenyewe ndiye anayescroll kwa kidole wakati
+  // huohuo, HATUINGILII kabisa — vinginevyo tunapigana na kidole chake
+  // na screen "inaruka" kurudi nyuma (hili ndilo tatizo lililoripotiwa).
+  // Tunatambua kugusa kwa touchstart/touchend na kurekebisha tu pale
+  // ambapo scroll imesogea BILA mtumiaji kugusa (yaani ni browser
+  // yenyewe iliyosogeza), na kwa tofauti kubwa tu (>40px) ili kuepuka
+  // kuingilia marekebisho madogo ya asili ya browser.
   // -------------------------------------------------------------------
-  function lockScroll(duration = 900) {
+  let isTouching = false;
+  window.addEventListener("touchstart", () => { isTouching = true; }, { passive: true });
+  window.addEventListener("touchend", () => { isTouching = false; }, { passive: true });
+  window.addEventListener("touchcancel", () => { isTouching = false; }, { passive: true });
+  window.addEventListener("mousedown", () => { isTouching = true; });
+  window.addEventListener("mouseup", () => { isTouching = false; });
+
+  function guardScroll(duration = 1500) {
     const y = window.scrollY;
-    const start = performance.now();
-    function tick(now) {
-      if (Math.abs(window.scrollY - y) > 2) {
+    function onScroll() {
+      if (isTouching) return; // mtumiaji anaskroll mwenyewe — usiingiliane
+      if (Math.abs(window.scrollY - y) > 40) {
         window.scrollTo(0, y);
       }
-      if (now - start < duration) {
-        requestAnimationFrame(tick);
-      }
     }
-    requestAnimationFrame(tick);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    setTimeout(() => window.removeEventListener("scroll", onScroll), duration);
   }
 
   function playChannel(channel, index, useTranscoder) {
@@ -116,7 +125,7 @@
         playerStatic.hidden = true;
         onAirBadge.hidden = false;
         clearTimeout(retryTimer);
-        lockScroll(600);
+        guardScroll(600);
         dlog(`Video inaonekana: ${video.videoWidth}x${video.videoHeight}`);
       }
     };
@@ -183,7 +192,7 @@
           playerStatic.hidden = true;
           onAirBadge.hidden = false;
           clearTimeout(retryTimer);
-          lockScroll(600);
+          guardScroll(600);
           dlog(`Video (transcoded) inaonekana: ${video.videoWidth}x${video.videoHeight}`);
         }
       };
@@ -262,7 +271,7 @@
         <span class="card-group">${escapeHtml(ch.group || ch.country || "")}</span>
       `;
       card.addEventListener("click", () => {
-        lockScroll(1000);
+        guardScroll(1000);
         playChannel(ch, i);
       });
       frag.appendChild(card);
@@ -337,7 +346,7 @@
       const unchanged = sameLength && newChannels.every((c, i) => c.url === currentChannels[i]?.url);
       if (unchanged) return;
 
-      lockScroll(500);
+      guardScroll(500);
       guideStatus.hidden = true;
       renderChannels(newChannels);
       dlog(`Orodha ya chaneli imesasishwa kimya kimya (${newChannels.length} sasa)`);
