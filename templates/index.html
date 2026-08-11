@@ -11,50 +11,52 @@
 </head>
 <body>
 
-<header class="topbar">
-  <div class="brand">
-    <span class="brand-dot"></span>
-    <span class="brand-name">RUNDA<em>TV</em></span>
-  </div>
-  <div class="search-wrap">
-    <input id="searchInput" type="search" placeholder="Tafuta chaneli…" autocomplete="off">
-  </div>
-</header>
-
-<section class="player-deck">
-  <div class="player-frame" id="playerFrame">
-    <video id="video" playsinline controls></video>
-    <div class="player-static" id="playerStatic">
-      <div class="static-noise"></div>
-      <p class="static-msg">Chagua chaneli chini kuanza kutazama</p>
-      <button class="fix-btn" id="fixBtn" hidden>🔧 Rekebisha video (transcode)</button>
+<div class="sticky-head" id="stickyHead">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">RUNDA<em>TV</em></span>
     </div>
-    <div class="on-air" id="onAirBadge" hidden>
-      <span class="on-air-dot"></span> ON AIR
+    <div class="search-wrap">
+      <input id="searchInput" type="search" placeholder="Tafuta chaneli…" autocomplete="off">
     </div>
-    <button class="debug-toggle" id="debugToggle">🐞</button>
-    <pre class="debug-log" id="debugLog" hidden></pre>
-    <button class="copy-log-btn" id="copyLogBtn" hidden>📋 Copy Log</button>
-  </div>
-  <div class="now-playing" id="nowPlaying">
-    <span class="np-number" id="npNumber">— — —</span>
-    <div class="np-info">
-      <span class="np-name" id="npName">Hakuna chaneli</span>
-      <span class="np-group" id="npGroup">&nbsp;</span>
+  </header>
+
+  <section class="player-deck">
+    <div class="player-frame" id="playerFrame">
+      <video id="video" playsinline controls></video>
+      <div class="player-static" id="playerStatic">
+        <div class="static-noise"></div>
+        <p class="static-msg">Chagua chaneli chini kuanza kutazama</p>
+        <button class="fix-btn" id="fixBtn" hidden>🔧 Rekebisha video (transcode)</button>
+      </div>
+      <div class="on-air" id="onAirBadge" hidden>
+        <span class="on-air-dot"></span> ON AIR
+      </div>
+      <button class="debug-toggle" id="debugToggle">🐞</button>
+      <pre class="debug-log" id="debugLog" hidden></pre>
+      <button class="copy-log-btn" id="copyLogBtn" hidden>📋 Copy Log</button>
     </div>
+    <div class="now-playing" id="nowPlaying">
+      <span class="np-number" id="npNumber">— — —</span>
+      <div class="np-info">
+        <span class="np-name" id="npName">Hakuna chaneli</span>
+        <span class="np-group" id="npGroup">&nbsp;</span>
+      </div>
+    </div>
+  </section>
+
+  <nav class="tabs" id="tabs">
+    {% for slug, c in categories.items() %}
+    <button class="tab" data-tab="{{ slug }}">{{ c.emoji }} {{ c.label }}</button>
+    {% endfor %}
+  </nav>
+
+  <div class="world-picker" id="worldPicker">
+    {% for c in countries %}
+    <button class="chip{{ ' active' if c.code == 'tz' else '' }}" data-country="{{ c.code }}">{{ c.flag }} {{ c.label }}</button>
+    {% endfor %}
   </div>
-</section>
-
-<nav class="tabs" id="tabs">
-  {% for slug, c in categories.items() %}
-  <button class="tab" data-tab="{{ slug }}">{{ c.emoji }} {{ c.label }}</button>
-  {% endfor %}
-</nav>
-
-<div class="world-picker" id="worldPicker">
-  {% for c in countries %}
-  <button class="chip{{ ' active' if c.code == 'tz' else '' }}" data-country="{{ c.code }}">{{ c.flag }} {{ c.label }}</button>
-  {% endfor %}
 </div>
 
 <main class="channel-guide" id="channelGuide">
@@ -63,7 +65,7 @@
 </main>
 
 <footer class="foot">
-  <p>Chanzo cha chaneli: <a href="https://github.com/iptv-org/iptv" target="_blank" rel="noopener">iptv-org/iptv</a> (playlist za umma). Baadhi ya streams zinaweza kutofanya kazi kwa muda.</p>
+  <p>Chanzo cha chaneli: <brayton living shirima" target="_blank" rel="noopener">iptv-org/iptv</a> (playlist za umma). Baadhi ya streams zinaweza kutofanya kazi kwa muda.</p>
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
