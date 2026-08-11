@@ -341,3 +341,24 @@ a { color: var(--num); }
   cursor: pointer;
 }
 .fix-btn:hover { background: rgba(255,255,255,.18); }
+
+.debug-log {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  right: 4px;
+  max-height: 40%;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(0,0,0,.75);
+  color: #7CFC00;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 5;
+}
