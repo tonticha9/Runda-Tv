@@ -1,9 +1,8 @@
 """
 Runda TV — Live channels streaming app
 Flask backend inayochukua playlists (M3U) kutoka iptv-org (chanzo huru cha
-IPTV playlists za umma) na kuzipanga kwa makundi: Habari na Dini pekee, pamoja
-na Dunia nzima (kwa nchi), zote zikiwa zimechujwa kuondoa channels za
-sports/movies/cartoon ambazo kwa kawaida si za leseni halali.
+IPTV playlists za umma) na kuzipanga kwa makundi: Habari, Dini, Sports,
+Movies, Music, Entertainment, Kids/Cartoon — pamoja na Dunia nzima (kwa nchi).
 
 Hakuna video inayohifadhiwa kwenye server hii — tunapitisha tu links za
 streams zilizopo hadharani.
@@ -27,23 +26,24 @@ REQUEST_TIMEOUT = 12
 CACHE_TTL = 60 * 60
 
 CATEGORIES = {
-    "news":      {"label": "Habari", "slug": "news",      "emoji": "📰"},
-    "religious": {"label": "Dini",   "slug": "religious", "emoji": "🙏"},
+    "news":          {"label": "Habari",      "slug": "news",          "emoji": "📰"},
+    "religious":     {"label": "Dini",        "slug": "religious",     "emoji": "🙏"},
+    "sports":        {"label": "Sports",      "slug": "sports",        "emoji": "⚽"},
+    "movies":        {"label": "Movies",      "slug": "movies",        "emoji": "🎬"},
+    "music":         {"label": "Music",       "slug": "music",         "emoji": "🎵"},
+    "entertainment": {"label": "Burudani",    "slug": "entertainment", "emoji": "🎭"},
+    "kids":          {"label": "Cartoon",     "slug": "kids",          "emoji": "🧸"},
 }
 
-BLOCKLIST_KEYWORDS = [
-    "sport", "espn", "bein", "supersport", "sky sport", "dazn", "eurosport",
-    "willow", "star sports", "fox sports", "gol tv", "premier sports",
-    "sportklub", "setanta", "match tv", "elevensports", "canal+ sport",
-    "hbo", "disney", "cartoon network", "nickelodeon", "nick jr", "cinemax",
-    "showtime", "starz", "paramount", "universal", "warner", "sony movies",
-    "fox movies", "amc", "cnbc movies", "zee cinema", "star movies",
-    "cine", "cinema", "movistar", "boomerang", "cartoonito", "netflix",
-    "prime video", "apple tv", "peacock",
-]
+# Blocklist imeachwa wazi kwa maombi ya msanii — categories zote (sports,
+# movies, cartoon, n.k) sasa zinaingia bila kuchujwa. Ukitaka kurudisha
+# uchujaji baadaye (mfano premium brands pekee), ongeza maneno humu.
+BLOCKLIST_KEYWORDS: list[str] = []
 
 
 def is_blocked(channel: dict) -> bool:
+    if not BLOCKLIST_KEYWORDS:
+        return False
     haystack = f"{channel.get('name', '')} {channel.get('group', '')}".lower()
     return any(kw in haystack for kw in BLOCKLIST_KEYWORDS)
 
