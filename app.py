@@ -204,9 +204,9 @@ def dedupe(channels: list[dict]) -> list[dict]:
     return prefer_medium_quality(out)
 
 
-LIVE_CHECK_TIMEOUT = 4
-LIVE_CHECK_MAX_WORKERS = 24
-LIVE_CHECK_BUDGET = 7
+LIVE_CHECK_TIMEOUT = 2.5
+LIVE_CHECK_MAX_WORKERS = 40
+LIVE_CHECK_BUDGET = 4
 LIVE_CACHE_TTL = 5 * 60
 
 _live_cache: dict[str, tuple[float, bool]] = {}
