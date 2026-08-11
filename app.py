@@ -150,6 +150,29 @@ def get_country_channels(code: str) -> list[dict]:
     return fetch_playlist(f"{IPTV_BASE}/countries/{code}.m3u")
 
 
+@cached(lambda code: f"country_full:{code}")
+def get_country_channels_full(code: str) -> list[dict]:
+    """Country playlist ya moja kwa moja + channels za makundi yote (news,
+    dini, movies, sports, n.k) ambazo zimeainishwa kwa nchi hii, ili
+    kuchagua nchi kuonyeshe kila kitu kinachopatikana, si orodha finyu tu."""
+    code_lower = code.lower()
+    code_upper = code.upper()
+
+    direct = get_country_channels(code_lower)
+
+    category_channels: list[dict] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CATEGORIES) or 1) as pool:
+        futures = [pool.submit(get_category_channels, meta["slug"]) for meta in CATEGORIES.values()]
+        for fut in concurrent.futures.as_completed(futures, timeout=20):
+            try:
+                category_channels.extend(fut.result())
+            except Exception as exc:
+                log.warning("Imeshindikana kupata kundi kwa ajili ya nchi %s: %s", code, exc)
+
+    country_tagged = [c for c in category_channels if (c.get("country") or "").upper() == code_upper]
+    return direct + country_tagged
+
+
 RES_RE = re.compile(r"\((\d{3,4})p\)")
 
 
@@ -269,7 +292,7 @@ def index():
 
 @app.route("/api/tanzania")
 def api_tanzania():
-    channels = filter_live(dedupe(get_country_channels("tz")))
+    channels = filter_live(dedupe(get_country_channels_full("tz")))
     return jsonify({"count": len(channels), "channels": channels})
 
 
@@ -283,7 +306,7 @@ def api_category(slug):
 
 @app.route("/api/country/<code>")
 def api_country(code):
-    channels = filter_live(dedupe(get_country_channels(code.lower())))
+    channels = filter_live(dedupe(get_country_channels_full(code.lower())))
     return jsonify({"count": len(channels), "channels": channels})
 
 
@@ -300,11 +323,11 @@ def api_search():
         return jsonify({"count": 0, "channels": []})
 
     if scope == "tanzania":
-        pool = get_country_channels("tz")
+        pool = get_country_channels_full("tz")
     elif scope in CATEGORIES:
         pool = get_category_channels(CATEGORIES[scope]["slug"])
     else:
-        pool = get_country_channels(scope.lower())
+        pool = get_country_channels_full(scope.lower())
 
     results = [c for c in dedupe(pool) if q in c.get("name", "").lower()]
     results = filter_live(results)
