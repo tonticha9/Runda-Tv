@@ -32,6 +32,12 @@
 
 * { box-sizing: border-box; }
 
+html {
+  /* scroll-behavior "auto" (si smooth) huzuia browser kusogeza screen
+     kwa animation ya ziada tunapoirudisha kwa lockScroll() */
+  scroll-behavior: auto;
+}
+
 html, body {
   margin: 0;
   background: var(--bg);
@@ -42,6 +48,9 @@ html, body {
 
 body {
   padding-bottom: 2rem;
+  /* huzuia browser "kukisia" na kuhamisha scroll position wakati content
+     (mfano channel logos) zinapopakia juu ya eneo ulilokuwa umeskrini */
+  overflow-anchor: none;
 }
 
 a { color: var(--num); }
@@ -138,6 +147,8 @@ a { color: var(--num); }
   font-size: .8rem;
   letter-spacing: .04em;
   text-transform: uppercase;
+  text-align: center;
+  padding: 0 1rem;
 }
 
 .on-air {
@@ -213,8 +224,11 @@ a { color: var(--num); }
   border-radius: 20px;
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color .15s, color .15s, background .15s;
+  transition: border-color .15s, color .15s, background .15s, transform .08s;
+  touch-action: manipulation;
+  user-select: none;
 }
+.tab:active { transform: scale(.95); }
 .tab.active {
   color: var(--bg);
   background: var(--live);
@@ -239,7 +253,11 @@ a { color: var(--num); }
   padding: .4rem .75rem;
   border-radius: 16px;
   cursor: pointer;
+  transition: transform .08s, border-color .15s, color .15s;
+  touch-action: manipulation;
+  user-select: none;
 }
+.chip:active { transform: scale(.95); }
 .chip.active { border-color: var(--num); color: var(--num); }
 
 /* ---------- channel guide ---------- */
@@ -256,6 +274,7 @@ a { color: var(--num); }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: .6rem;
+  overflow-anchor: none;
 }
 
 .channel-card {
@@ -268,9 +287,11 @@ a { color: var(--num); }
   padding: .65rem;
   cursor: pointer;
   text-align: left;
-  transition: border-color .15s, transform .1s;
+  transition: border-color .15s, transform .08s;
+  touch-action: manipulation;
+  user-select: none;
 }
-.channel-card:active { transform: scale(.98); }
+.channel-card:active { transform: scale(.96); }
 .channel-card.playing { border-color: var(--live); }
 
 .card-top {
@@ -344,8 +365,11 @@ a { color: var(--num); }
   color: #fff;
   font-size: 14px;
   cursor: pointer;
+  touch-action: manipulation;
+  transition: transform .08s, background .15s;
 }
 .fix-btn:hover { background: rgba(255,255,255,.18); }
+.fix-btn:active { transform: scale(.95); }
 
 .debug-log {
   position: absolute;
@@ -382,6 +406,7 @@ a { color: var(--num); }
   font-weight: 600;
   cursor: pointer;
   pointer-events: auto;
+  touch-action: manipulation;
 }
 
 .debug-toggle {
@@ -398,4 +423,7 @@ a { color: var(--num); }
   font-size: 13px;
   cursor: pointer;
   pointer-events: auto;
+  touch-action: manipulation;
+  transition: transform .08s;
 }
+.debug-toggle:active { transform: scale(.9); }
