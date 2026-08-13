@@ -427,29 +427,35 @@ def base_name(name: str) -> str:
     return RES_RE.sub("", name or "").strip().lower()
 
 
-def prefer_best_quality(channels: list[dict]) -> list[dict]:
-    """Ukiwa na variants kadhaa za channel hiyohiyo (mfano 360p/576p/1080p),
-    chagua ubora wa JUU zaidi unaopatikana — si wa kati tena, kwa maombi ya
-    msanii ya 'quality ya hali ya juu kama TV nyingine'."""
+def merge_channel_sources(channels: list[dict]) -> list[dict]:
+    """Channels zenye jina lilelile (mfano kutoka playlist tofauti, au
+    ubora tofauti 360p/720p/1080p) zinaunganishwa kuwa 'card' MOJA yenye
+    'sources': orodha ya URL zote (bora kwanza). Frontend itajaribu chanzo
+    kinachofuata otomatiki endapo cha kwanza kimefeli — kama TV halisi
+    yenye redundancy ya mawimbi."""
     groups: dict[str, list[dict]] = {}
-    no_res: list[dict] = []
-
     for ch in channels:
-        res = extract_resolution(ch.get("name", ""))
-        if res is None:
-            no_res.append(ch)
-            continue
         key = base_name(ch.get("name", ""))
         groups.setdefault(key, []).append(ch)
 
-    out = list(no_res)
+    out = []
     for variants in groups.values():
-        if len(variants) == 1:
-            out.append(variants[0])
-            continue
-
-        best = max(variants, key=lambda ch: extract_resolution(ch.get("name", "")) or 0)
-        out.append(best)
+        sorted_variants = sorted(
+            variants,
+            key=lambda c: extract_resolution(c.get("name", "")) or 0,
+            reverse=True,
+        )
+        primary = dict(sorted_variants[0])
+        sources = []
+        seen_urls = set()
+        for v in sorted_variants:
+            u = v.get("url")
+            if u and u not in seen_urls:
+                seen_urls.add(u)
+                sources.append(u)
+        primary["url"] = sources[0]
+        primary["sources"] = sources
+        out.append(primary)
     return out
 
 
@@ -464,7 +470,7 @@ def dedupe(channels: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         out.append(ch)
-    return prefer_best_quality(out)
+    return merge_channel_sources(out)
 
 
 LIVE_CHECK_TIMEOUT = 1.8
