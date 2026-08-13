@@ -2,7 +2,7 @@
   const TRANSCODER_URL = "https://rundatranscoder.fly.dev";
 
   const video = document.getElementById("video");
-  const ytFrame = document.getElementById("ytFrame");
+  let ytFrame = document.getElementById("ytFrame");
   const ytBadge = document.getElementById("ytBadge");
   const playerStatic = document.getElementById("playerStatic");
   const onAirBadge = document.getElementById("onAirBadge");
@@ -37,6 +37,38 @@
   let retryCountdown = null;
   let listRefreshTimer = null;
 
+
+  // -------------------------------------------------------------------
+  // Kubadilisha tu iframe.src="" HAKUHAKIKISHI sauti ya YouTube inasimama
+  // papo hapo kwenye baadhi ya simu — inaweza kuendelea "kuongea" nyuma
+  // wakati channel nyingine (HLS au YouTube nyingine) inacheza. Suluhisho
+  // la kweli ni kuondoa iframe kabisa kwenye ukurasa na kuunda mpya —
+  // hii inasimamisha kila kitu papo hapo bila shaka.
+  // -------------------------------------------------------------------
+  function hardResetYouTubeFrame() {
+    const fresh = document.createElement("iframe");
+    fresh.id = "ytFrame";
+    fresh.className = "yt-frame";
+    fresh.hidden = true;
+    fresh.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
+    fresh.setAttribute("allowfullscreen", "");
+    ytFrame.replaceWith(fresh);
+    ytFrame = fresh;
+  }
+
+  // Wakati stream inakwama kidogo (buffering) baada ya kuanza kucheza,
+  // onyesha ujumbe badala ya kuacha screen ikiwa nyeusi bila maelezo.
+  video.addEventListener("waiting", () => {
+    if (!currentChannel || currentChannel.type === "youtube") return;
+    playerStatic.hidden = false;
+    onAirBadge.hidden = true;
+    playerStatic.querySelector(".static-msg").textContent = "Inapakia zaidi…";
+  });
+  video.addEventListener("playing", () => {
+    if (!currentChannel || currentChannel.type === "youtube") return;
+    playerStatic.hidden = true;
+    onAirBadge.hidden = false;
+  });
 
   function dlog(msg) {
     const ts = new Date().toLocaleTimeString();
@@ -122,6 +154,10 @@
     video.oncanplay = null;
     video.onplaying = null;
 
+    // ondoa/sitisha kabisa iframe ya YouTube ya awali (kama ipo) kabla ya
+    // kuanza chochote kipya — hii ndiyo inazuia sauti mbili kuongea pamoja
+    hardResetYouTubeFrame();
+
     if (channel.type === "youtube") {
       video.pause();
       video.removeAttribute("src");
@@ -130,9 +166,8 @@
       return;
     }
 
-    // channel ya kawaida (HLS) — hakikisha ytFrame imefichwa
+    // channel ya kawaida (HLS) — hakikisha ytFrame (mpya) imefichwa
     ytFrame.hidden = true;
-    ytFrame.src = "";
     video.hidden = false;
 
     if (useTranscoder) {
@@ -154,14 +189,16 @@
       dlog("HLS.js inatumika (MSE)");
       hls = new window.Hls({
         enableWorker: true,
-        maxBufferLength: 20,
-        maxMaxBufferLength: 30,
-        backBufferLength: 10,
+        maxBufferLength: 40,
+        maxMaxBufferLength: 90,
+        backBufferLength: 20,
         maxBufferHole: 0.5,
-        fragLoadingMaxRetry: 6,
+        fragLoadingMaxRetry: 8,
         fragLoadingRetryDelay: 500,
-        manifestLoadingMaxRetry: 4,
-        levelLoadingMaxRetry: 4,
+        manifestLoadingMaxRetry: 6,
+        levelLoadingMaxRetry: 6,
+        capLevelToPlayerSize: false,
+        startLevel: -1,
       });
       hls.loadSource(channel.url);
       hls.attachMedia(video);
@@ -264,7 +301,7 @@
       const data = await res.json();
       showYouTubeVideo(data, index, myToken);
       clearInterval(ytCheckTimer);
-      ytCheckTimer = setInterval(() => checkYouTubeUpdate(channel, index, myToken), 60000);
+      ytCheckTimer = setInterval(() => checkYouTubeUpdate(channel, index, myToken), 30000);
     } catch (err) {
       console.error(err);
       if (myToken === playToken) {
@@ -276,13 +313,18 @@
   function showYouTubeVideo(data, index, myToken) {
     if (myToken !== playToken) return;
     ytCurrentVideoId = data.video_id;
-    ytFrame.src = `https://www.youtube-nocookie.com/embed/${data.video_id}?autoplay=1&playsinline=1&rel=0`;
+    const start = Math.max(0, Math.floor(data.start || 0));
+    ytFrame.src =
+      `https://www.youtube-nocookie.com/embed/${data.video_id}` +
+      `?autoplay=1&playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&start=${start}`;
     ytFrame.hidden = false;
     playerStatic.hidden = true;
     onAirBadge.hidden = !data.is_live;
     ytBadge.hidden = data.is_live;
     guardScroll(600);
-    dlog(data.is_live ? "YouTube: ipo LIVE sasa" : "YouTube: haipo live — inacheza video la mwisho");
+    dlog(data.is_live
+      ? "YouTube: ipo LIVE sasa"
+      : `YouTube: haipo live — inaendelea kutoka dakika ${Math.floor(start / 60)}`);
   }
 
   async function checkYouTubeUpdate(channel, index, myToken) {
@@ -506,7 +548,7 @@
       }
       if (currentChannel && currentChannel.type === "youtube") {
         clearInterval(ytCheckTimer);
-        ytCheckTimer = setInterval(() => checkYouTubeUpdate(currentChannel, currentIndex, playToken), 60000);
+        ytCheckTimer = setInterval(() => checkYouTubeUpdate(currentChannel, currentIndex, playToken), 30000);
       }
       scheduleListRefresh();
     }
