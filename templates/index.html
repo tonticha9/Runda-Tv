@@ -25,6 +25,9 @@
   <section class="player-deck">
     <div class="player-frame" id="playerFrame">
       <video id="video" playsinline controls></video>
+      <iframe id="ytFrame" class="yt-frame" hidden
+        allow="autoplay; encrypted-media; picture-in-picture"
+        allowfullscreen></iframe>
       <div class="player-static" id="playerStatic">
         <div class="static-noise"></div>
         <p class="static-msg">Chagua chaneli chini kuanza kutazama</p>
@@ -33,6 +36,7 @@
       <div class="on-air" id="onAirBadge" hidden>
         <span class="on-air-dot"></span> ON AIR
       </div>
+      <div class="yt-badge" id="ytBadge" hidden>📺 VIDEO ZA NYUMA</div>
       <button class="debug-toggle" id="debugToggle">🐞</button>
       <pre class="debug-log" id="debugLog" hidden></pre>
       <button class="copy-log-btn" id="copyLogBtn" hidden>📋 Copy Log</button>
@@ -65,7 +69,7 @@
 </main>
 
 <footer class="foot">
-  <p>Chanzo cha chaneli: <brayton living shirima" target="_blank" rel="noopener">iptv-org/iptv</a> (playlist za umma). Baadhi ya streams zinaweza kutofanya kazi kwa muda.</p>
+  <p>Chanzo cha chaneli: <a href="https://github.com/iptv-org/iptv" target="_blank" rel="noopener">iptv-org/iptv</a> (playlist za umma). Baadhi ya streams zinaweza kutofanya kazi kwa muda.</p>
 </footer>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
