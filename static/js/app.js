@@ -2,7 +2,7 @@
   const TRANSCODER_URL = "https://rundatranscoder.fly.dev";
 
   const video = document.getElementById("video");
-  let ytFrame = document.getElementById("ytFrame");
+  const ytFrameWrap = document.getElementById("ytFrameWrap");
   const ytBadge = document.getElementById("ytBadge");
   const playerStatic = document.getElementById("playerStatic");
   const onAirBadge = document.getElementById("onAirBadge");
@@ -37,23 +37,91 @@
   let retryCountdown = null;
   let listRefreshTimer = null;
 
+  // -------------------------------------------------------------------
+  // YouTube IFrame Player API — tunatumia player HALISI (si iframe.src
+  // ya kawaida) ili tuweze "kusikia" video inapoisha (ENDED) na kupakia
+  // inayofuata PAPO HAPO, bila kusubiri polling. Pia stopVideo()/
+  // loadVideoById() ni njia rasmi ya kusimamisha sauti — ya kutegemewa
+  // zaidi kuliko kubadilisha iframe.src.
+  // -------------------------------------------------------------------
+  let ytPlayer = null;
+  let ytApiReady = false;
+  let ytPendingInit = null;
 
-  // -------------------------------------------------------------------
-  // Kubadilisha tu iframe.src="" HAKUHAKIKISHI sauti ya YouTube inasimama
-  // papo hapo kwenye baadhi ya simu — inaweza kuendelea "kuongea" nyuma
-  // wakati channel nyingine (HLS au YouTube nyingine) inacheza. Suluhisho
-  // la kweli ni kuondoa iframe kabisa kwenye ukurasa na kuunda mpya —
-  // hii inasimamisha kila kitu papo hapo bila shaka.
-  // -------------------------------------------------------------------
-  function hardResetYouTubeFrame() {
-    const fresh = document.createElement("iframe");
-    fresh.id = "ytFrame";
-    fresh.className = "yt-frame";
-    fresh.hidden = true;
-    fresh.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
-    fresh.setAttribute("allowfullscreen", "");
-    ytFrame.replaceWith(fresh);
-    ytFrame = fresh;
+  window.onYouTubeIframeAPIReady = () => {
+    ytApiReady = true;
+    if (ytPendingInit) {
+      const cb = ytPendingInit;
+      ytPendingInit = null;
+      createYtPlayer(cb);
+    }
+  };
+
+  function createYtPlayer(onReadyCallback) {
+    ytPlayer = new YT.Player("ytPlayerHost", {
+      height: "100%",
+      width: "100%",
+      host: "https://www.youtube-nocookie.com",
+      playerVars: {
+        autoplay: 1,
+        playsinline: 1,
+        rel: 0,
+        modestbranding: 1,
+        iv_load_policy: 3,
+        controls: 1,
+        fs: 1,
+        origin: window.location.origin,
+      },
+      events: {
+        onReady: () => { if (onReadyCallback) onReadyCallback(); },
+        onStateChange: onYtStateChange,
+        onError: (e) => {
+          dlog(`YouTube player error: ${e.data}`);
+          showError("Video hii ya YouTube haipatikani", currentIndex, false, true, playToken);
+        },
+      },
+    });
+  }
+
+  function ensureYtPlayer(onReadyCallback) {
+    if (ytPlayer) { onReadyCallback(); return; }
+    if (!ytApiReady || !window.YT || !window.YT.Player) {
+      ytPendingInit = onReadyCallback;
+      return;
+    }
+    createYtPlayer(onReadyCallback);
+  }
+
+  function onYtStateChange(event) {
+    if (!currentChannel || currentChannel.type !== "youtube") return;
+    if (event.data === YT.PlayerState.PLAYING) {
+      playerStatic.hidden = true;
+      guardScroll(600);
+    }
+    if (event.data === YT.PlayerState.BUFFERING) {
+      // acha player ionyeshe spinner yake yenyewe, si lazima tuonyeshe yetu
+    }
+    if (event.data === YT.PlayerState.ENDED) {
+      dlog("YouTube video imeisha — inaendelea na kipindi kinachofuata…");
+      playNextInSchedule();
+    }
+  }
+
+  async function playNextInSchedule() {
+    if (!currentChannel || currentChannel.type !== "youtube") return;
+    const myToken = playToken;
+    try {
+      const res = await fetch(`/api/youtube/${currentChannel.youtube_key}?after=${ytCurrentVideoId}`);
+      if (!res.ok || myToken !== playToken) return;
+      const data = await res.json();
+      if (!data.video_id) return;
+      ytCurrentVideoId = data.video_id;
+      onAirBadge.hidden = !data.is_live;
+      ytBadge.hidden = data.is_live;
+      ytPlayer.loadVideoById({ videoId: data.video_id, startSeconds: data.start || 0 });
+    } catch (err) {
+      console.error("playNextInSchedule imeshindwa:", err);
+    }
   }
 
   // Wakati stream inakwama kidogo (buffering) baada ya kuanza kucheza,
@@ -154,9 +222,12 @@
     video.oncanplay = null;
     video.onplaying = null;
 
-    // ondoa/sitisha kabisa iframe ya YouTube ya awali (kama ipo) kabla ya
-    // kuanza chochote kipya — hii ndiyo inazuia sauti mbili kuongea pamoja
-    hardResetYouTubeFrame();
+    // sitisha kabisa YouTube player ya awali (kama ipo) kabla ya kuanza
+    // chochote kipya — hii ndiyo inazuia sauti mbili kuongea pamoja
+    if (ytPlayer && typeof ytPlayer.stopVideo === "function") {
+      try { ytPlayer.stopVideo(); } catch (e) { /* player bado haijawa tayari */ }
+    }
+    ytFrameWrap.hidden = true;
 
     if (channel.type === "youtube") {
       video.pause();
@@ -166,8 +237,7 @@
       return;
     }
 
-    // channel ya kawaida (HLS) — hakikisha ytFrame (mpya) imefichwa
-    ytFrame.hidden = true;
+    // channel ya kawaida (HLS)
     video.hidden = false;
 
     if (useTranscoder) {
@@ -285,10 +355,11 @@
   // inajizuia yenyewe).
   // -------------------------------------------------------------------
   // -------------------------------------------------------------------
-  // YouTube channels (Wasafi, TBC, n.k): huchezwa kwenye iframe, si
-  // <video>/HLS. Tunaangalia kwanza kama ipo LIVE; kama hapana, tunacheza
-  // video la mwisho lililopakiwa. Kila sekunde 60 tunaangalia tena — ikiwa
-  // imeanza live, tunahamia live moja kwa moja bila mtumiaji kufanya lolote.
+  // YouTube channels (Wasafi, TBC, n.k): huchezwa kupitia YT.Player halisi.
+  // Tunaangalia kwanza kama ipo LIVE; kama hapana, tunacheza sehemu sahihi
+  // ya 'ratiba ya kudumu'. Kila sekunde 30 tunaangalia kama imeanza live —
+  // mpito wa video-hadi-video-inayofuata (isiyo live) unashughulikiwa na
+  // onYtStateChange (ENDED), si na polling hii.
   // -------------------------------------------------------------------
   async function playYouTubeChannel(channel, index, myToken) {
     try {
@@ -314,17 +385,18 @@
     if (myToken !== playToken) return;
     ytCurrentVideoId = data.video_id;
     const start = Math.max(0, Math.floor(data.start || 0));
-    ytFrame.src =
-      `https://www.youtube-nocookie.com/embed/${data.video_id}` +
-      `?autoplay=1&playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&start=${start}`;
-    ytFrame.hidden = false;
-    playerStatic.hidden = true;
-    onAirBadge.hidden = !data.is_live;
-    ytBadge.hidden = data.is_live;
-    guardScroll(600);
-    dlog(data.is_live
-      ? "YouTube: ipo LIVE sasa"
-      : `YouTube: haipo live — inaendelea kutoka dakika ${Math.floor(start / 60)}`);
+    ensureYtPlayer(() => {
+      if (myToken !== playToken) return;
+      ytFrameWrap.hidden = false;
+      playerStatic.hidden = true;
+      onAirBadge.hidden = !data.is_live;
+      ytBadge.hidden = data.is_live;
+      ytPlayer.loadVideoById({ videoId: data.video_id, startSeconds: start });
+      guardScroll(600);
+      dlog(data.is_live
+        ? "YouTube: ipo LIVE sasa"
+        : `YouTube: haipo live — inaendelea kutoka dakika ${Math.floor(start / 60)}`);
+    });
   }
 
   async function checkYouTubeUpdate(channel, index, myToken) {
@@ -334,12 +406,16 @@
       const res = await fetch(`/api/youtube/${channel.youtube_key}`);
       if (!res.ok || myToken !== playToken) return;
       const data = await res.json();
-      if (data.video_id && data.video_id !== ytCurrentVideoId) {
-        dlog("YouTube: video/hali imebadilika — inasasisha player…");
+      // badilisha player TU ikiwa hali imebadilika kutoka VOD kwenda LIVE
+      // (au kinyume chake) — usiguse video ya VOD inayoendelea vizuri,
+      // hilo linashughulikiwa na ENDED event pekee.
+      const wasLive = !onAirBadge.hidden;
+      if (data.is_live !== wasLive) {
+        dlog(data.is_live ? "YouTube: imeanza LIVE — inahamia moja kwa moja" : "YouTube: live imeisha — inarudi kwenye ratiba");
         showYouTubeVideo(data, index, myToken);
-      } else {
-        onAirBadge.hidden = !data.is_live;
-        ytBadge.hidden = data.is_live;
+      } else if (data.is_live) {
+        onAirBadge.hidden = false;
+        ytBadge.hidden = true;
       }
     } catch (err) {
       console.error("YouTube check imeshindwa:", err);
