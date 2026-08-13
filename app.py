@@ -47,6 +47,94 @@ def is_blocked(channel: dict) -> bool:
     haystack = f"{channel.get('name', '')} {channel.get('group', '')}".lower()
     return any(kw in haystack for kw in BLOCKLIST_KEYWORDS)
 
+
+# ---------------------------------------------------------------------------
+# Channels za Tanzania zisizopatikana kwenye iptv-org lakini zinazorusha
+# kwenye YouTube (Wasafi TV, TBC, ITV, n.k). Hizi zinaongezwa moja kwa moja
+# kwenye orodha ya "Tanzania" — si tab/tier tofauti.
+#
+# "channel_id" ni ile UCxxxxxxxxxxxxxxxxxxxxxxxx (si @jina wala video link).
+# Ongeza entries hapa chini utakapopata Channel ID za kila kituo.
+# ---------------------------------------------------------------------------
+CUSTOM_YOUTUBE_CHANNELS: dict[str, dict] = {
+    # --- Habari ---
+    "itv":         {"label": "ITV Tanzania",  "group": "Habari",   "channel_id": "UCRmReUqNqc-GSZeD48QKjhQ"},
+    "eatv":        {"label": "EATV",          "group": "Habari",   "channel_id": "UCyYzMKBalg6jMVNuC-JRMog"},
+    "tbc":         {"label": "TBC",           "group": "Habari",   "channel_id": "UCj0bMshbN_6uVubF5Zq74iw"},
+    "channelten":  {"label": "Channel Ten",   "group": "Habari",   "channel_id": "UCbL9oen2mK3mRcoS-bWqIig"},
+    "cloudstv":    {"label": "Clouds TV",     "group": "Habari",   "channel_id": "UC57gZpSndZioE7b93XfD78Q"},
+    # --- Burudani ---
+    "wasafi":      {"label": "Wasafi TV",     "group": "Burudani", "channel_id": "UC-B3b6C0Z_tUeAsa5OiswXg"},
+    "safaritv":    {"label": "Safari TV",     "group": "Burudani", "channel_id": "UC1bXWpZ3p5hE39w7Ie9L2vQ"},
+    # --- Muziki ---
+    "tracemziki":  {"label": "Trace Mziki",   "group": "Muziki",   "channel_id": "UCmP4q_80B1Z7p_p4uQW_3Yw"},
+    # --- Movies ---
+    "sinemazetu":  {"label": "Sinema Zetu",   "group": "Movies",   "channel_id": "UCvfGTyirCsFQRnLhX_N_oww"},
+    "starswahili": {"label": "Star Swahili",  "group": "Movies",   "channel_id": "UChO8wVAs_NfR74LgE4m6P9w"},
+    # --- Sports ---
+    "azamsports":  {"label": "Azam Sports",   "group": "Sports",   "channel_id": "UCpHiA0taMn231yDiUeqoANw"},
+}
+
+YT_LIVE_URL = "https://www.youtube.com/channel/{}/live"
+YT_RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
+YT_CANONICAL_RE = re.compile(r'"canonicalUrl":"https://www\.youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})"')
+YT_VIDEOID_RSS_RE = re.compile(r'<yt:videoId>([a-zA-Z0-9_-]{11})</yt:videoId>')
+YT_CACHE_TTL = 90  # sekunde — status ya live inabadilika haraka, cache fupi
+
+_youtube_cache: dict[str, tuple[float, dict]] = {}
+
+
+def resolve_youtube_channel(channel_id: str) -> dict:
+    """Angalia kama channel ipo LIVE sasa; kama hapana, rudisha video la
+    mwisho lililopakiwa (kupitia RSS ya umma — hauitaji API key)."""
+    now = time.time()
+    hit = _youtube_cache.get(channel_id)
+    if hit and now - hit[0] < YT_CACHE_TTL:
+        return hit[1]
+
+    result = {"video_id": None, "is_live": False}
+    try:
+        resp = requests.get(
+            YT_LIVE_URL.format(channel_id),
+            timeout=8,
+            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 12) RundaTV/1.0"},
+        )
+        html = resp.text
+        is_live_flag = '"isLive":true' in html or '"isLiveNow":true' in html
+        m = YT_CANONICAL_RE.search(html)
+        if is_live_flag and m:
+            result = {"video_id": m.group(1), "is_live": True}
+    except requests.RequestException as exc:
+        log.warning("Imeshindikana kuangalia live YouTube %s: %s", channel_id, exc)
+
+    if not result["video_id"]:
+        try:
+            resp = requests.get(YT_RSS_URL.format(channel_id), timeout=8)
+            m = YT_VIDEOID_RSS_RE.search(resp.text)
+            if m:
+                result = {"video_id": m.group(1), "is_live": False}
+        except requests.RequestException as exc:
+            log.warning("Imeshindikana kupata RSS YouTube %s: %s", channel_id, exc)
+
+    _youtube_cache[channel_id] = (now, result)
+    return result
+
+
+def tz_youtube_cards() -> list[dict]:
+    """Geuza CUSTOM_YOUTUBE_CHANNELS kuwa 'channel cards' zenye muundo
+    unaofanana na zile za iptv-org, ili ziingie kwenye grid ile ile."""
+    cards = []
+    for key, meta in CUSTOM_YOUTUBE_CHANNELS.items():
+        cards.append({
+            "name": meta["label"],
+            "logo": meta.get("logo", ""),
+            "group": meta.get("group", "Tanzania"),
+            "country": "TZ",
+            "type": "youtube",
+            "youtube_key": key,
+        })
+    return cards
+
 WORLD_COUNTRIES = [
     {"code": "tz", "label": "Tanzania", "flag": "🇹🇿"},
     {"code": "ke", "label": "Kenya", "flag": "🇰🇪"},
@@ -293,6 +381,7 @@ def index():
 @app.route("/api/tanzania")
 def api_tanzania():
     channels = filter_live(dedupe(get_country_channels_full("tz")))
+    channels = channels + tz_youtube_cards()
     return jsonify({"count": len(channels), "channels": channels})
 
 
@@ -306,8 +395,22 @@ def api_category(slug):
 
 @app.route("/api/country/<code>")
 def api_country(code):
-    channels = filter_live(dedupe(get_country_channels_full(code.lower())))
+    code = code.lower()
+    channels = filter_live(dedupe(get_country_channels_full(code)))
+    if code == "tz":
+        channels = channels + tz_youtube_cards()
     return jsonify({"count": len(channels), "channels": channels})
+
+
+@app.route("/api/youtube/<key>")
+def api_youtube_resolve(key):
+    meta = CUSTOM_YOUTUBE_CHANNELS.get(key)
+    if not meta:
+        return jsonify({"error": "channel haijulikani"}), 404
+    result = resolve_youtube_channel(meta["channel_id"])
+    if not result["video_id"]:
+        return jsonify({"error": "haipatikani kwa sasa"}), 502
+    return jsonify(result)
 
 
 @app.route("/api/countries")
@@ -331,6 +434,8 @@ def api_search():
 
     results = [c for c in dedupe(pool) if q in c.get("name", "").lower()]
     results = filter_live(results)
+    if scope == "tanzania":
+        results = results + [c for c in tz_youtube_cards() if q in c["name"].lower()]
     return jsonify({"count": len(results), "channels": results})
 
 
