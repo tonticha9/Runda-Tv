@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("runda-tv")
 
 IPTV_BASE = "https://iptv-org.github.io/iptv"
-REQUEST_TIMEOUT = 12
+REQUEST_TIMEOUT = 8
 CACHE_TTL = 60 * 60
 
 CATEGORIES = {
@@ -75,6 +75,34 @@ CUSTOM_YOUTUBE_CHANNELS: dict[str, dict] = {
     "azamsports":  {"label": "Azam Sports",   "group": "Sports",   "channel_id": "UCpHiA0taMn231yDiUeqoANw"},
 }
 
+def fetch_html_snippet(url: str, stop_markers: tuple, timeout: float = 6, max_bytes: int = 350_000) -> str:
+    """Pakua ukurasa taratibu (streaming) na SIMAMA mara tunapopata alama
+    tunazohitaji (mfano 'lengthSeconds') — badala ya kupakua ukurasa mzima
+    wa YouTube (unaoweza kuwa 1MB+). Hii ndiyo chanzo kikuu cha ucheleweshaji
+    uliokuwepo — sasa tunapunguza data tunayopakua kwa kiasi kikubwa."""
+    chunks = []
+    total = 0
+    resp = requests.get(
+        url, timeout=timeout, stream=True,
+        headers={"User-Agent": "Mozilla/5.0 (Linux; Android 12) RundaTV/1.0"},
+    )
+    try:
+        resp.raise_for_status()
+        for chunk in resp.iter_content(chunk_size=16384):
+            if not chunk:
+                continue
+            chunks.append(chunk.decode("utf-8", errors="ignore"))
+            total += len(chunk)
+            combined_tail = "".join(chunks[-3:])  # dirisha dogo la kutosha kupata pattern
+            if any(marker in combined_tail or marker in chunks[-1] for marker in stop_markers):
+                break
+            if total >= max_bytes:
+                break
+    finally:
+        resp.close()
+    return "".join(chunks)
+
+
 YT_LIVE_URL = "https://www.youtube.com/channel/{}/live"
 YT_RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
 YT_WATCH_URL = "https://www.youtube.com/watch?v={}"
@@ -97,11 +125,8 @@ def get_video_duration(video_id: str) -> int:
         return _duration_cache[video_id]
     duration = YT_DEFAULT_DURATION
     try:
-        resp = requests.get(
-            YT_WATCH_URL.format(video_id), timeout=8,
-            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 12) RundaTV/1.0"},
-        )
-        m = YT_DURATION_RE.search(resp.text)
+        html = fetch_html_snippet(YT_WATCH_URL.format(video_id), stop_markers=('"lengthSeconds"',))
+        m = YT_DURATION_RE.search(html)
         if m:
             duration = max(int(m.group(1)), 30)
     except requests.RequestException as exc:
@@ -112,7 +137,7 @@ def get_video_duration(video_id: str) -> int:
 
 def get_recent_video_ids(channel_id: str, limit: int = 8) -> list[str]:
     try:
-        resp = requests.get(YT_RSS_URL.format(channel_id), timeout=8)
+        resp = requests.get(YT_RSS_URL.format(channel_id), timeout=6)
         ids = YT_VIDEOID_RSS_RE.findall(resp.text)
         return ids[:limit]
     except requests.RequestException as exc:
@@ -122,15 +147,32 @@ def get_recent_video_ids(channel_id: str, limit: int = 8) -> list[str]:
 
 def get_channel_schedule(channel_id: str) -> list[tuple[str, int]]:
     """Orodha ya (video_id, muda) ya video za hivi karibuni za channel,
-    zenye cache ya dakika 30."""
+    zenye cache ya dakika 30. Durations zote zinavutwa KWA PAMOJA
+    (parallel) badala ya moja baada ya nyingine — hii ndiyo iliyokuwa
+    sababu kuu ya ucheleweshaji wa zaidi ya sekunde 10."""
     now = time.time()
     hit = _schedule_cache.get(channel_id)
     if hit and now - hit[0] < YT_SCHEDULE_TTL:
         return hit[1]
 
     ids = get_recent_video_ids(channel_id)
-    schedule = [(vid, get_video_duration(vid)) for vid in ids]
-    schedule = [(v, d) for v, d in schedule if d > 0]
+    schedule = []
+    if ids:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(ids), 8)) as pool:
+            future_to_id = {pool.submit(get_video_duration, vid): vid for vid in ids}
+            for fut in concurrent.futures.as_completed(future_to_id, timeout=10):
+                vid = future_to_id[fut]
+                try:
+                    dur = fut.result()
+                except Exception:
+                    dur = YT_DEFAULT_DURATION
+                if dur > 0:
+                    schedule.append((vid, dur))
+        # rudisha kwenye mpangilio wa awali (wa tarehe) badala ya mpangilio
+        # usio na mfumo unaosababishwa na as_completed
+        order = {vid: i for i, vid in enumerate(ids)}
+        schedule.sort(key=lambda item: order.get(item[0], 999))
+
     _schedule_cache[channel_id] = (now, schedule)
     return schedule
 
@@ -158,6 +200,21 @@ def compute_virtual_playback(channel_id: str) -> dict:
     return {"video_id": schedule[0][0], "start": 0}
 
 
+def next_in_schedule(channel_id: str, after_video_id: str) -> dict:
+    """Video INAYOFUATA baada ya hii iliyoisha (si kwa kuhesabu muda tena,
+    ili kuepuka 'kudrift' — inatumika pindi frontend inapotuambia video
+    fulani imeisha kwa hakika, kupitia YouTube Player API's ENDED event)."""
+    schedule = get_channel_schedule(channel_id)
+    if not schedule:
+        return {"video_id": None, "start": 0}
+    ids = [v for v, _ in schedule]
+    if after_video_id in ids:
+        nxt = ids[(ids.index(after_video_id) + 1) % len(ids)]
+    else:
+        nxt = ids[0]
+    return {"video_id": nxt, "start": 0}
+
+
 def resolve_youtube_channel(channel_id: str) -> dict:
     """Angalia kama channel ipo LIVE sasa; kama hapana, rudisha nafasi
     sahihi ya 'ratiba ya kudumu' iliyotengenezwa kutoka video za nyuma —
@@ -169,12 +226,10 @@ def resolve_youtube_channel(channel_id: str) -> dict:
 
     result = {"video_id": None, "is_live": False, "start": 0}
     try:
-        resp = requests.get(
+        html = fetch_html_snippet(
             YT_LIVE_URL.format(channel_id),
-            timeout=8,
-            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 12) RundaTV/1.0"},
+            stop_markers=('"isLive":true', '"isLiveNow":true', '"canonicalUrl"'),
         )
-        html = resp.text
         is_live_flag = '"isLive":true' in html or '"isLiveNow":true' in html
         m = YT_CANONICAL_RE.search(html)
         if is_live_flag and m:
@@ -313,16 +368,25 @@ def get_country_channels(code: str) -> list[dict]:
 def get_country_channels_full(code: str) -> list[dict]:
     """Country playlist ya moja kwa moja + channels za makundi yote (news,
     dini, movies, sports, n.k) ambazo zimeainishwa kwa nchi hii, ili
-    kuchagua nchi kuonyeshe kila kitu kinachopatikana, si orodha finyu tu."""
+    kuchagua nchi kuonyeshe kila kitu kinachopatikana, si orodha finyu tu.
+    Zote (direct + makundi 7) zinavutwa KWA PAMOJA kwenye pool moja — si
+    direct kwanza kisha makundi baadaye — kwa kasi zaidi."""
     code_lower = code.lower()
     code_upper = code.upper()
 
-    direct = get_country_channels(code_lower)
-
+    direct: list[dict] = []
     category_channels: list[dict] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CATEGORIES) or 1) as pool:
-        futures = [pool.submit(get_category_channels, meta["slug"]) for meta in CATEGORIES.values()]
-        for fut in concurrent.futures.as_completed(futures, timeout=20):
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CATEGORIES) + 1) as pool:
+        direct_future = pool.submit(get_country_channels, code_lower)
+        cat_futures = [pool.submit(get_category_channels, meta["slug"]) for meta in CATEGORIES.values()]
+
+        try:
+            direct = direct_future.result(timeout=15)
+        except Exception as exc:
+            log.warning("Imeshindikana kupata orodha ya moja kwa moja ya nchi %s: %s", code, exc)
+
+        for fut in concurrent.futures.as_completed(cat_futures, timeout=15):
             try:
                 category_channels.extend(fut.result())
             except Exception as exc:
@@ -384,9 +448,9 @@ def dedupe(channels: list[dict]) -> list[dict]:
     return prefer_best_quality(out)
 
 
-LIVE_CHECK_TIMEOUT = 2.5
-LIVE_CHECK_MAX_WORKERS = 40
-LIVE_CHECK_BUDGET = 4
+LIVE_CHECK_TIMEOUT = 1.8
+LIVE_CHECK_MAX_WORKERS = 80
+LIVE_CHECK_BUDGET = 2.5
 LIVE_CACHE_TTL = 5 * 60
 
 _live_cache: dict[str, tuple[float, bool]] = {}
@@ -476,6 +540,16 @@ def api_youtube_resolve(key):
     meta = CUSTOM_YOUTUBE_CHANNELS.get(key)
     if not meta:
         return jsonify({"error": "channel haijulikani"}), 404
+
+    after = request.args.get("after")
+    if after:
+        # Frontend inatuambia video FULANI imeisha kwa hakika (kupitia
+        # YouTube Player API) — tupe INAYOFUATA moja kwa moja, si kuhesabu
+        # muda tena (inazuia 'kudrift' na kurudi video ile ile).
+        nxt = next_in_schedule(meta["channel_id"], after)
+        if nxt.get("video_id"):
+            return jsonify({"video_id": nxt["video_id"], "is_live": False, "start": 0})
+
     result = resolve_youtube_channel(meta["channel_id"])
     if not result["video_id"]:
         return jsonify({"error": "haipatikani kwa sasa"}), 502
