@@ -67,7 +67,7 @@ CUSTOM_YOUTUBE_CHANNELS: dict[str, dict] = {
     "wasafi":      {"label": "Wasafi TV",     "group": "Burudani", "channel_id": "UC-B3b6C0Z_tUeAsa5OiswXg"},
     "safaritv":    {"label": "Safari TV",     "group": "Burudani", "channel_id": "UC1bXWpZ3p5hE39w7Ie9L2vQ"},
     # --- Muziki ---
-    "tracemziki":  {"label": "Trace Mziki",   "group": "Muziki",   "channel_id": "UCmP4q_80B1Z7p_p4uQW_3Yw"},
+    "tracemziki":  {"label": "Trace Mziki",   "group": "Muziki",   "channel_id": "UCEEEl-UyDconQ-MIGvqgHUQ"},
     # --- Movies ---
     "sinemazetu":  {"label": "Sinema Zetu",   "group": "Movies",   "channel_id": "UCvfGTyirCsFQRnLhX_N_oww"},
     "starswahili": {"label": "Star Swahili",  "group": "Movies",   "channel_id": "UChO8wVAs_NfR74LgE4m6P9w"},
@@ -77,22 +77,97 @@ CUSTOM_YOUTUBE_CHANNELS: dict[str, dict] = {
 
 YT_LIVE_URL = "https://www.youtube.com/channel/{}/live"
 YT_RSS_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
+YT_WATCH_URL = "https://www.youtube.com/watch?v={}"
 YT_CANONICAL_RE = re.compile(r'"canonicalUrl":"https://www\.youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})"')
 YT_VIDEOID_RSS_RE = re.compile(r'<yt:videoId>([a-zA-Z0-9_-]{11})</yt:videoId>')
+YT_DURATION_RE = re.compile(r'"lengthSeconds":"(\d+)"')
 YT_CACHE_TTL = 90  # sekunde — status ya live inabadilika haraka, cache fupi
+YT_SCHEDULE_TTL = 30 * 60  # dakika 30 — orodha ya video mpya haibadiliki mara kwa mara
+YT_DEFAULT_DURATION = 600  # dakika 10 — kama tumeshindwa kupata muda halisi
 
 _youtube_cache: dict[str, tuple[float, dict]] = {}
+_duration_cache: dict[str, int] = {}
+_schedule_cache: dict[str, tuple[float, list]] = {}
+
+
+def get_video_duration(video_id: str) -> int:
+    """Muda (sekunde) wa video — unahifadhiwa kabisa (haubadiliki kamwe
+    baada ya video kupakiwa), kwa hiyo cache yake haiisha muda."""
+    if video_id in _duration_cache:
+        return _duration_cache[video_id]
+    duration = YT_DEFAULT_DURATION
+    try:
+        resp = requests.get(
+            YT_WATCH_URL.format(video_id), timeout=8,
+            headers={"User-Agent": "Mozilla/5.0 (Linux; Android 12) RundaTV/1.0"},
+        )
+        m = YT_DURATION_RE.search(resp.text)
+        if m:
+            duration = max(int(m.group(1)), 30)
+    except requests.RequestException as exc:
+        log.warning("Imeshindikana kupata muda wa video %s: %s", video_id, exc)
+    _duration_cache[video_id] = duration
+    return duration
+
+
+def get_recent_video_ids(channel_id: str, limit: int = 8) -> list[str]:
+    try:
+        resp = requests.get(YT_RSS_URL.format(channel_id), timeout=8)
+        ids = YT_VIDEOID_RSS_RE.findall(resp.text)
+        return ids[:limit]
+    except requests.RequestException as exc:
+        log.warning("Imeshindikana kupata RSS ya ratiba %s: %s", channel_id, exc)
+        return []
+
+
+def get_channel_schedule(channel_id: str) -> list[tuple[str, int]]:
+    """Orodha ya (video_id, muda) ya video za hivi karibuni za channel,
+    zenye cache ya dakika 30."""
+    now = time.time()
+    hit = _schedule_cache.get(channel_id)
+    if hit and now - hit[0] < YT_SCHEDULE_TTL:
+        return hit[1]
+
+    ids = get_recent_video_ids(channel_id)
+    schedule = [(vid, get_video_duration(vid)) for vid in ids]
+    schedule = [(v, d) for v, d in schedule if d > 0]
+    _schedule_cache[channel_id] = (now, schedule)
+    return schedule
+
+
+def compute_virtual_playback(channel_id: str) -> dict:
+    """Inatengeneza 'channel ya moja kwa moja' kutoka video za nyuma —
+    kila mtu anayetazama wakati mmoja anaona sehemu ile ile ya video hiyo
+    (kama TV halisi), kwa kutumia muda wa sasa wa duniani (epoch) kama
+    saa ya kudumu ya kituo — si kwa mtumiaji mmoja mmoja."""
+    schedule = get_channel_schedule(channel_id)
+    if not schedule:
+        return {"video_id": None, "start": 0}
+
+    total = sum(d for _, d in schedule)
+    if total <= 0:
+        return {"video_id": schedule[0][0], "start": 0}
+
+    elapsed = int(time.time()) % total
+    cursor = 0
+    for vid, dur in schedule:
+        if elapsed < cursor + dur:
+            return {"video_id": vid, "start": elapsed - cursor}
+        cursor += dur
+
+    return {"video_id": schedule[0][0], "start": 0}
 
 
 def resolve_youtube_channel(channel_id: str) -> dict:
-    """Angalia kama channel ipo LIVE sasa; kama hapana, rudisha video la
-    mwisho lililopakiwa (kupitia RSS ya umma — hauitaji API key)."""
+    """Angalia kama channel ipo LIVE sasa; kama hapana, rudisha nafasi
+    sahihi ya 'ratiba ya kudumu' iliyotengenezwa kutoka video za nyuma —
+    kama TV halisi, si video ile ile ikianza upya kila mara."""
     now = time.time()
     hit = _youtube_cache.get(channel_id)
     if hit and now - hit[0] < YT_CACHE_TTL:
         return hit[1]
 
-    result = {"video_id": None, "is_live": False}
+    result = {"video_id": None, "is_live": False, "start": 0}
     try:
         resp = requests.get(
             YT_LIVE_URL.format(channel_id),
@@ -103,18 +178,14 @@ def resolve_youtube_channel(channel_id: str) -> dict:
         is_live_flag = '"isLive":true' in html or '"isLiveNow":true' in html
         m = YT_CANONICAL_RE.search(html)
         if is_live_flag and m:
-            result = {"video_id": m.group(1), "is_live": True}
+            result = {"video_id": m.group(1), "is_live": True, "start": 0}
     except requests.RequestException as exc:
         log.warning("Imeshindikana kuangalia live YouTube %s: %s", channel_id, exc)
 
     if not result["video_id"]:
-        try:
-            resp = requests.get(YT_RSS_URL.format(channel_id), timeout=8)
-            m = YT_VIDEOID_RSS_RE.search(resp.text)
-            if m:
-                result = {"video_id": m.group(1), "is_live": False}
-        except requests.RequestException as exc:
-            log.warning("Imeshindikana kupata RSS YouTube %s: %s", channel_id, exc)
+        pos = compute_virtual_playback(channel_id)
+        if pos.get("video_id"):
+            result = {"video_id": pos["video_id"], "is_live": False, "start": pos.get("start", 0)}
 
     _youtube_cache[channel_id] = (now, result)
     return result
@@ -273,7 +344,10 @@ def base_name(name: str) -> str:
     return RES_RE.sub("", name or "").strip().lower()
 
 
-def prefer_medium_quality(channels: list[dict]) -> list[dict]:
+def prefer_best_quality(channels: list[dict]) -> list[dict]:
+    """Ukiwa na variants kadhaa za channel hiyohiyo (mfano 360p/576p/1080p),
+    chagua ubora wa JUU zaidi unaopatikana — si wa kati tena, kwa maombi ya
+    msanii ya 'quality ya hali ya juu kama TV nyingine'."""
     groups: dict[str, list[dict]] = {}
     no_res: list[dict] = []
 
@@ -291,12 +365,7 @@ def prefer_medium_quality(channels: list[dict]) -> list[dict]:
             out.append(variants[0])
             continue
 
-        def score(ch):
-            res = extract_resolution(ch.get("name", "")) or 0
-            target = 600
-            return abs(res - target)
-
-        best = min(variants, key=score)
+        best = max(variants, key=lambda ch: extract_resolution(ch.get("name", "")) or 0)
         out.append(best)
     return out
 
@@ -312,7 +381,7 @@ def dedupe(channels: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         out.append(ch)
-    return prefer_medium_quality(out)
+    return prefer_best_quality(out)
 
 
 LIVE_CHECK_TIMEOUT = 2.5
