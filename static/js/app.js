@@ -243,6 +243,37 @@
       return;
     }
 
+    startHlsPlayback(channel, index, myToken, 0);
+  }
+
+  function getSources(channel) {
+    if (Array.isArray(channel.sources) && channel.sources.length) return channel.sources;
+    return channel.url ? [channel.url] : [];
+  }
+
+  // -------------------------------------------------------------------
+  // Channels nyingi za IPTV zina vyanzo (sources) kadhaa — mbili au zaidi
+  // za mirror/ubora tofauti. Chanzo kimoja kikifeli (network error ya
+  // kudumu), tunajaribu KINACHOFUATA papo hapo bila mtumiaji kufanya
+  // lolote — kama redundancy ya kweli ya TV.
+  // -------------------------------------------------------------------
+  function startHlsPlayback(channel, index, myToken, sourceIndex) {
+    if (myToken !== playToken) return;
+    const sources = getSources(channel);
+    if (sourceIndex >= sources.length) {
+      showError("Chaneli haipatikani kwa sasa (vyanzo vyote vimefeli)", index, false, true, myToken);
+      return;
+    }
+    const url = sources[sourceIndex];
+    if (sources.length > 1) {
+      dlog(`Kujaribu chanzo ${sourceIndex + 1}/${sources.length}…`);
+    }
+
+    if (hls) {
+      hls.destroy();
+      hls = null;
+    }
+    video.oncanplay = null;
     video.onplaying = () => {
       if (video.videoWidth > 0) {
         playerStatic.hidden = true;
@@ -254,7 +285,7 @@
     };
 
     if (window.Hls && window.Hls.isSupported()) {
-      dlog("HLS.js inatumika (MSE)");
+      dlog(sourceIndex === 0 ? "HLS.js inatumika (MSE)" : "HLS.js inatumika (chanzo mbadala)");
       hls = new window.Hls({
         enableWorker: true,
         maxBufferLength: 40,
@@ -268,21 +299,20 @@
         capLevelToPlayerSize: false,
         startLevel: -1,
       });
-      hls.loadSource(channel.url);
+      hls.loadSource(url);
       hls.attachMedia(video);
       hls.on(window.Hls.Events.ERROR, (_evt, data) => {
         dlog(`HLS ${data.fatal ? "FATAL" : "warn"}: ${data.type}/${data.details}`);
         if (!data.fatal) return;
+        if (myToken !== playToken) return;
         if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
           dlog("Inajaribu kupona (recoverMediaError)…");
           hls.recoverMediaError();
           return;
         }
-        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
-          showError("Chaneli haipatikani kwa sasa", index, false, true, myToken);
-        } else {
-          showError("Stream hii haipatikani kwa sasa", index, false, true, myToken);
-        }
+        // NETWORK_ERROR au nyingine ya kudumu — jaribu chanzo kinachofuata
+        dlog(`Chanzo ${sourceIndex + 1} kimefeli — inajaribu chanzo mbadala…`);
+        startHlsPlayback(channel, index, myToken, sourceIndex + 1);
       });
       video.play().catch((e) => {
         if (e.name === "AbortError") {
@@ -293,7 +323,7 @@
       });
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       dlog("Native HLS (Safari) inatumika");
-      video.src = channel.url;
+      video.src = url;
       video.play().catch(() => {});
     } else {
       showError("Browser yako haiwezi kucheza stream hii", index, false, false, myToken);
