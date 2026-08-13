@@ -2,6 +2,8 @@
   const TRANSCODER_URL = "https://rundatranscoder.fly.dev";
 
   const video = document.getElementById("video");
+  const ytFrame = document.getElementById("ytFrame");
+  const ytBadge = document.getElementById("ytBadge");
   const playerStatic = document.getElementById("playerStatic");
   const onAirBadge = document.getElementById("onAirBadge");
   const fixBtn = document.getElementById("fixBtn");
@@ -23,6 +25,8 @@
   let searchDebounce = null;
   let currentChannel = null;
   let currentIndex = null;
+  let ytCheckTimer = null;
+  let ytCurrentVideoId = null;
 
   // Kila mara playChannel inaitwa, playToken inaongezeka. Retries za zamani
   // zinaangalia token yao dhidi ya ya sasa kabla ya kujaribu tena — hii
@@ -32,6 +36,7 @@
   let retryTimer = null;
   let retryCountdown = null;
   let listRefreshTimer = null;
+
 
   function dlog(msg) {
     const ts = new Date().toLocaleTimeString();
@@ -88,11 +93,12 @@
   }
 
   function playChannel(channel, index, useTranscoder) {
-    if (!channel.url) return;
+    if (!channel.url && channel.type !== "youtube") return;
     currentChannel = channel;
     currentIndex = index;
     const myToken = ++playToken;
     clearTimeout(retryTimer);
+    clearInterval(ytCheckTimer);
     clearLog();
     dlog(`Kucheza: ${channel.name}`);
 
@@ -105,6 +111,7 @@
     npGroup.textContent = channel.group || channel.country || "";
     fixBtn.hidden = true;
     onAirBadge.hidden = true;
+    ytBadge.hidden = true;
     playerStatic.hidden = false;
     playerStatic.querySelector(".static-msg").textContent = "Inapakia…";
 
@@ -114,6 +121,19 @@
     }
     video.oncanplay = null;
     video.onplaying = null;
+
+    if (channel.type === "youtube") {
+      video.pause();
+      video.removeAttribute("src");
+      video.hidden = true;
+      playYouTubeChannel(channel, index, myToken);
+      return;
+    }
+
+    // channel ya kawaida (HLS) — hakikisha ytFrame imefichwa
+    ytFrame.hidden = true;
+    ytFrame.src = "";
+    video.hidden = false;
 
     if (useTranscoder) {
       playViaTranscoder(channel, index, myToken);
@@ -221,6 +241,64 @@
   // achague channel nyingine (playToken inabadilika hivyo retry ya zamani
   // inajizuia yenyewe).
   // -------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // YouTube channels (Wasafi, TBC, n.k): huchezwa kwenye iframe, si
+  // <video>/HLS. Tunaangalia kwanza kama ipo LIVE; kama hapana, tunacheza
+  // video la mwisho lililopakiwa. Kila sekunde 60 tunaangalia tena — ikiwa
+  // imeanza live, tunahamia live moja kwa moja bila mtumiaji kufanya lolote.
+  // -------------------------------------------------------------------
+  async function playYouTubeChannel(channel, index, myToken) {
+    try {
+      const res = await fetch(`/api/youtube/${channel.youtube_key}`);
+      if (myToken !== playToken) return; // mtumiaji ameshabadili channel
+      if (!res.ok) {
+        showError("Channel hii haipatikani YouTube kwa sasa", index, false, true, myToken);
+        return;
+      }
+      const data = await res.json();
+      showYouTubeVideo(data, index, myToken);
+      clearInterval(ytCheckTimer);
+      ytCheckTimer = setInterval(() => checkYouTubeUpdate(channel, index, myToken), 60000);
+    } catch (err) {
+      console.error(err);
+      if (myToken === playToken) {
+        showError("Imeshindikana kufikia YouTube — angalia mtandao wako", index, false, true, myToken);
+      }
+    }
+  }
+
+  function showYouTubeVideo(data, index, myToken) {
+    if (myToken !== playToken) return;
+    ytCurrentVideoId = data.video_id;
+    ytFrame.src = `https://www.youtube-nocookie.com/embed/${data.video_id}?autoplay=1&playsinline=1&rel=0`;
+    ytFrame.hidden = false;
+    playerStatic.hidden = true;
+    onAirBadge.hidden = !data.is_live;
+    ytBadge.hidden = data.is_live;
+    guardScroll(600);
+    dlog(data.is_live ? "YouTube: ipo LIVE sasa" : "YouTube: haipo live — inacheza video la mwisho");
+  }
+
+  async function checkYouTubeUpdate(channel, index, myToken) {
+    if (myToken !== playToken) { clearInterval(ytCheckTimer); return; }
+    if (document.hidden) return;
+    try {
+      const res = await fetch(`/api/youtube/${channel.youtube_key}`);
+      if (!res.ok || myToken !== playToken) return;
+      const data = await res.json();
+      if (data.video_id && data.video_id !== ytCurrentVideoId) {
+        dlog("YouTube: video/hali imebadilika — inasasisha player…");
+        showYouTubeVideo(data, index, myToken);
+      } else {
+        onAirBadge.hidden = !data.is_live;
+        ytBadge.hidden = data.is_live;
+      }
+    } catch (err) {
+      console.error("YouTube check imeshindwa:", err);
+    }
+  }
+
+
   function showError(message, index, offerFix, retryable, token) {
     if (token !== undefined && token !== playToken) return; // si channel ya sasa
     playerStatic.hidden = false;
@@ -406,10 +484,15 @@
       video.pause();
       clearInterval(listRefreshTimer);
       clearTimeout(retryTimer);
+      clearInterval(ytCheckTimer);
       dlog("App imekwenda background — video imesimamishwa kuokoa data");
     } else {
-      if (currentChannel && video.paused && video.src) {
+      if (currentChannel && currentChannel.type !== "youtube" && video.paused && video.src) {
         video.play().catch(() => {});
+      }
+      if (currentChannel && currentChannel.type === "youtube") {
+        clearInterval(ytCheckTimer);
+        ytCheckTimer = setInterval(() => checkYouTubeUpdate(currentChannel, currentIndex, playToken), 60000);
       }
       scheduleListRefresh();
     }
