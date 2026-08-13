@@ -248,17 +248,36 @@ def resolve_youtube_channel(channel_id: str) -> dict:
 
 def tz_youtube_cards() -> list[dict]:
     """Geuza CUSTOM_YOUTUBE_CHANNELS kuwa 'channel cards' zenye muundo
-    unaofanana na zile za iptv-org, ili ziingie kwenye grid ile ile."""
+    unaofanana na zile za iptv-org, ili ziingie kwenye grid ile ile.
+    Channel ISIYOONYESHA video kwa sasa (haijapata video_id kwa njia
+    yoyote — si live wala schedule) INAONDOLEWA kabisa kwenye orodha,
+    mpaka ipatikane tena — sawa na filter_live() ya channels za IPTV."""
+    if not CUSTOM_YOUTUBE_CHANNELS:
+        return []
+
     cards = []
-    for key, meta in CUSTOM_YOUTUBE_CHANNELS.items():
-        cards.append({
-            "name": meta["label"],
-            "logo": meta.get("logo", ""),
-            "group": meta.get("group", "Tanzania"),
-            "country": "TZ",
-            "type": "youtube",
-            "youtube_key": key,
-        })
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CUSTOM_YOUTUBE_CHANNELS)) as pool:
+        future_map = {
+            pool.submit(resolve_youtube_channel, meta["channel_id"]): (key, meta)
+            for key, meta in CUSTOM_YOUTUBE_CHANNELS.items()
+        }
+        for fut in concurrent.futures.as_completed(future_map, timeout=15):
+            key, meta = future_map[fut]
+            try:
+                result = fut.result()
+            except Exception as exc:
+                log.warning("Imeshindikana kuangalia YouTube channel %s: %s", key, exc)
+                continue
+            if not result.get("video_id"):
+                continue  # haionyeshi kitu kwa sasa — usiionyeshe kwenye grid
+            cards.append({
+                "name": meta["label"],
+                "logo": meta.get("logo", ""),
+                "group": meta.get("group", "Tanzania"),
+                "country": "TZ",
+                "type": "youtube",
+                "youtube_key": key,
+            })
     return cards
 
 WORLD_COUNTRIES = [
