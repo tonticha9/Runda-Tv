@@ -179,7 +179,13 @@
           showError("Stream hii haipatikani kwa sasa", index, false, true, myToken);
         }
       });
-      video.play().catch((e) => dlog(`video.play() KATAA: ${e.message}`));
+      video.play().catch((e) => {
+        if (e.name === "AbortError") {
+          dlog("play() ilikatishwa na load nyingine (kawaida, si tatizo — inaendelea)");
+        } else {
+          dlog(`video.play() KATAA: ${e.message}`);
+        }
+      });
     } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
       dlog("Native HLS (Safari) inatumika");
       video.src = channel.url;
@@ -349,6 +355,14 @@
         <span class="card-group">${escapeHtml(ch.group || ch.country || "")}</span>
       `;
       card.addEventListener("click", () => {
+        // zuia kubofya channel hiyo hiyo mara mbili haraka (chanzo cha
+        // kawaida cha ujumbe "play() interrupted by a new load request")
+        if (currentChannel && currentChannel.url === ch.url &&
+            currentChannel.youtube_key === ch.youtube_key &&
+            Date.now() - (card.dataset.lastPlay || 0) < 800) {
+          return;
+        }
+        card.dataset.lastPlay = Date.now();
         guardScroll(1000);
         playChannel(ch, i);
       });
