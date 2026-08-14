@@ -383,21 +383,39 @@ def get_country_channels(code: str) -> list[dict]:
     return fetch_playlist(f"{IPTV_BASE}/countries/{code}.m3u")
 
 
+# ---------------------------------------------------------------------------
+# Chanzo cha PILI (Free-TV) — playlist moja kubwa isiyogawanywa kwa
+# nchi/category. Tunaitumia kwa njia mbili: (1) channels zenye tvg-country
+# inayolingana zinaongezwa moja kwa moja, (2) channels zenye JINA
+# linalofanana na channel tuliyoshapata kutoka iptv-org zinaunganishwa
+# kama 'sources' za ziada (redundancy) hata bila tag ya nchi.
+# Ikiwa link hii haifanyi kazi (haijathibitishwa na mimi — sina uwezo wa
+# search/network wa moja kwa moja), fetch_playlist() inarudisha orodha
+# tupu bila kuvunja chochote.
+# ---------------------------------------------------------------------------
+FREETV_URL = "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8"
+
+
+@cached(lambda _: "freetv_all")
+def get_freetv_channels(_: str = "all") -> list[dict]:
+    return fetch_playlist(FREETV_URL)
+
+
 @cached(lambda code: f"country_full:{code}")
 def get_country_channels_full(code: str) -> list[dict]:
     """Country playlist ya moja kwa moja + channels za makundi yote (news,
-    dini, movies, sports, n.k) ambazo zimeainishwa kwa nchi hii, ili
-    kuchagua nchi kuonyeshe kila kitu kinachopatikana, si orodha finyu tu.
-    Zote (direct + makundi 7) zinavutwa KWA PAMOJA kwenye pool moja — si
-    direct kwanza kisha makundi baadaye — kwa kasi zaidi."""
+    dini, movies, sports, n.k) + Free-TV (chanzo cha pili) — zote
+    zinavutwa KWA PAMOJA kwenye pool moja kwa kasi zaidi."""
     code_lower = code.lower()
     code_upper = code.upper()
 
     direct: list[dict] = []
     category_channels: list[dict] = []
+    freetv_channels: list[dict] = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CATEGORIES) + 1) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CATEGORIES) + 2) as pool:
         direct_future = pool.submit(get_country_channels, code_lower)
+        freetv_future = pool.submit(get_freetv_channels, "all")
         cat_futures = [pool.submit(get_category_channels, meta["slug"]) for meta in CATEGORIES.values()]
 
         try:
@@ -411,8 +429,21 @@ def get_country_channels_full(code: str) -> list[dict]:
             except Exception as exc:
                 log.warning("Imeshindikana kupata kundi kwa ajili ya nchi %s: %s", code, exc)
 
+        try:
+            freetv_channels = freetv_future.result(timeout=15)
+        except Exception as exc:
+            log.warning("Imeshindikana kupata Free-TV: %s", exc)
+
     country_tagged = [c for c in category_channels if (c.get("country") or "").upper() == code_upper]
-    return direct + country_tagged
+
+    known_names = {base_name(c.get("name", "")).lower() for c in direct + country_tagged}
+    freetv_by_tag = [c for c in freetv_channels if (c.get("country") or "").upper() == code_upper]
+    freetv_by_name = [
+        c for c in freetv_channels
+        if base_name(c.get("name", "")).lower() in known_names
+    ]
+
+    return direct + country_tagged + freetv_by_tag + freetv_by_name
 
 
 RES_RE = re.compile(r"\((\d{3,4})p\)")
@@ -452,8 +483,9 @@ def merge_channel_sources(channels: list[dict]) -> list[dict]:
             u = v.get("url")
             if u and u not in seen_urls:
                 seen_urls.add(u)
-                sources.append(u)
-        primary["url"] = sources[0]
+                res = extract_resolution(v.get("name", ""))
+                sources.append({"url": u, "quality": f"{res}p" if res else "SD"})
+        primary["url"] = sources[0]["url"]
         primary["sources"] = sources
         out.append(primary)
     return out
