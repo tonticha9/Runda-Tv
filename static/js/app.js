@@ -35,6 +35,7 @@
   let retryTimer = null;
   let retryCountdown = null;
   let listRefreshTimer = null;
+  let stallTimer = null;
 
   // -------------------------------------------------------------------
   // YouTube IFrame Player API — tunatumia player HALISI (si iframe.src
@@ -247,15 +248,22 @@
   }
 
   function getSources(channel) {
-    if (Array.isArray(channel.sources) && channel.sources.length) return channel.sources;
-    return channel.url ? [channel.url] : [];
+    if (Array.isArray(channel.sources) && channel.sources.length) {
+      // hakikisha kila kipengele ni {url, quality} — kama backend ya zamani
+      // ilirudisha string tupu (muundo wa awali), tuigeuze pia
+      return channel.sources.map((s) =>
+        typeof s === "string" ? { url: s, quality: "" } : s
+      );
+    }
+    return channel.url ? [{ url: channel.url, quality: "" }] : [];
   }
 
   // -------------------------------------------------------------------
   // Channels nyingi za IPTV zina vyanzo (sources) kadhaa — mbili au zaidi
   // za mirror/ubora tofauti. Chanzo kimoja kikifeli (network error ya
-  // kudumu), tunajaribu KINACHOFUATA papo hapo bila mtumiaji kufanya
-  // lolote — kama redundancy ya kweli ya TV.
+  // kudumu AU kikanyamaza bila kutoa hitilafu kabisa), tunajaribu
+  // KINACHOFUATA papo hapo bila mtumiaji kufanya lolote — kama redundancy
+  // ya kweli ya TV.
   // -------------------------------------------------------------------
   function startHlsPlayback(channel, index, myToken, sourceIndex) {
     if (myToken !== playToken) return;
@@ -264,18 +272,21 @@
       showError("Chaneli haipatikani kwa sasa (vyanzo vyote vimefeli)", index, false, true, myToken);
       return;
     }
-    const url = sources[sourceIndex];
+    const entry = sources[sourceIndex];
+    const url = entry.url;
     if (sources.length > 1) {
-      dlog(`Kujaribu chanzo ${sourceIndex + 1}/${sources.length}…`);
+      dlog(`Kujaribu chanzo ${sourceIndex + 1}/${sources.length}${entry.quality ? " (" + entry.quality + ")" : ""}…`);
     }
 
     if (hls) {
       hls.destroy();
       hls = null;
     }
+    clearTimeout(stallTimer);
     video.oncanplay = null;
     video.onplaying = () => {
       if (video.videoWidth > 0) {
+        clearTimeout(stallTimer);
         playerStatic.hidden = true;
         onAirBadge.hidden = false;
         clearTimeout(retryTimer);
@@ -283,6 +294,16 @@
         dlog(`Video inaonekana: ${video.videoWidth}x${video.videoHeight}`);
       }
     };
+
+    // "Saa ya ulinzi": kama video haijaanza kucheza ndani ya sekunde 15
+    // (hata bila hitilafu yoyote kutoka HLS.js — mfano stream ikinyamaza
+    // kimya bila kujibu), tunahesabu hilo kama kushindwa na kuruka kwenye
+    // chanzo kinachofuata moja kwa moja.
+    stallTimer = setTimeout(() => {
+      if (myToken !== playToken) return;
+      dlog(`Chanzo ${sourceIndex + 1} halijaanza kucheza ndani ya sekunde 15 — inajaribu chanzo mbadala…`);
+      startHlsPlayback(channel, index, myToken, sourceIndex + 1);
+    }, 15000);
 
     if (window.Hls && window.Hls.isSupported()) {
       dlog(sourceIndex === 0 ? "HLS.js inatumika (MSE)" : "HLS.js inatumika (chanzo mbadala)");
@@ -296,7 +317,7 @@
         fragLoadingRetryDelay: 500,
         manifestLoadingMaxRetry: 6,
         levelLoadingMaxRetry: 6,
-        capLevelToPlayerSize: false,
+        capLevelToPlayerSize: true,
         startLevel: -1,
       });
       hls.loadSource(url);
@@ -311,6 +332,7 @@
           return;
         }
         // NETWORK_ERROR au nyingine ya kudumu — jaribu chanzo kinachofuata
+        clearTimeout(stallTimer);
         dlog(`Chanzo ${sourceIndex + 1} kimefeli — inajaribu chanzo mbadala…`);
         startHlsPlayback(channel, index, myToken, sourceIndex + 1);
       });
@@ -326,6 +348,7 @@
       video.src = url;
       video.play().catch(() => {});
     } else {
+      clearTimeout(stallTimer);
       showError("Browser yako haiwezi kucheza stream hii", index, false, false, myToken);
     }
   }
@@ -643,6 +666,7 @@
       clearInterval(listRefreshTimer);
       clearTimeout(retryTimer);
       clearInterval(ytCheckTimer);
+      clearTimeout(stallTimer);
       dlog("App imekwenda background — video imesimamishwa kuokoa data");
     } else {
       if (currentChannel && currentChannel.type !== "youtube" && video.paused && video.src) {
