@@ -36,6 +36,9 @@ html {
   /* scroll-behavior "auto" (si smooth) huzuia browser kusogeza screen
      kwa animation ya ziada tunapoirudisha kwa lockScroll() */
   scroll-behavior: auto;
+  /* huzuia pinch-zoom (chanzo cha video kugandamana wakati sauti
+     inaendelea) kwenye baadhi ya browsers zinazopuuza meta viewport */
+  touch-action: pan-y;
 }
 
 html, body {
@@ -448,4 +451,3 @@ a { color: var(--num); }
   transition: transform .08s;
 }
 .debug-toggle:active { transform: scale(.9); }
-   
